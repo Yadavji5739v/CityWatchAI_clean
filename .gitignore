@@ -1,0 +1,47 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+uploads/
+data/*.db
+data/*.sqlite3
+
+
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Frontend dependencies and builds
+node_modules/
+dist/
+
+# IDE and operating system
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local databases and logs
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Uploaded evidence and private user files
+backend/uploads/
+uploads/
+
+# Model caches
+.cache/

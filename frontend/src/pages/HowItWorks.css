@@ -1,0 +1,671 @@
+
+.civic-how-page {
+  --navy: #18375b;
+  --blue: #1764ed;
+  --teal: #19ad9b;
+  --muted: #667d98;
+  --line: #e1ebf8;
+  width: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+  color: var(--navy);
+  background: #fff;
+  font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.civic-how-page * {
+  box-sizing: border-box;
+}
+
+.civic-how-page a {
+  text-decoration: none;
+}
+
+.civic-how-header {
+  min-height: 66px;
+  padding: 12px clamp(18px, 5vw, 72px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-bottom: 1px solid #edf2fa;
+  background: #fff;
+}
+
+.civic-how-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #122747;
+  font-size: 19px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.civic-brand-icon {
+  font-size: 25px;
+}
+
+.civic-how-brand b {
+  color: var(--blue);
+}
+
+.civic-header-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 13px;
+  border: 1px solid #d8e6ff;
+  border-radius: 10px;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.civic-how-hero {
+  display: grid;
+  grid-template-columns: 1fr 0.9fr;
+  align-items: center;
+  gap: 28px;
+  padding: 42px clamp(18px, 5vw, 72px);
+  background: linear-gradient(120deg, #f4f9ff, #fff 72%);
+}
+
+.civic-hero-copy {
+  max-width: 540px;
+}
+
+.civic-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #42698f;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.civic-kicker-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #16b99c;
+  box-shadow: 0 0 0 4px #dff8ef;
+}
+
+.civic-hero-copy h1 {
+  margin: 17px 0;
+  font-size: clamp(34px, 4.3vw, 57px);
+  line-height: 1.06;
+  letter-spacing: -2px;
+  font-weight: 900;
+}
+
+.civic-hero-copy h1 span {
+  color: var(--teal);
+}
+
+.civic-hero-copy p,
+.civic-final-card p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.civic-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px 19px;
+  border-radius: 11px;
+  color: #fff;
+  background: linear-gradient(120deg, #1764ed, #0755db);
+  box-shadow: 0 8px 20px #1764ed26;
+  font-size: 13px;
+  font-weight: 800;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.civic-primary-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 25px #1764ed35;
+}
+
+.civic-hero-illustration {
+  position: relative;
+  min-height: 260px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  isolation: isolate;
+  border-radius: 32% 42% 12px 12px;
+  background: #e5f2ff;
+}
+
+.civic-hero-sun {
+  position: absolute;
+  top: 28px;
+  right: 15%;
+  width: 57px;
+  height: 57px;
+  border-radius: 50%;
+  background: #ffe39a;
+  z-index: -1;
+}
+
+.civic-hero-cloud {
+  position: absolute;
+  top: 28px;
+  left: 12%;
+  font-size: 38px;
+}
+
+.civic-hero-city {
+  position: absolute;
+  bottom: 32px;
+  font-size: clamp(65px, 8vw, 105px);
+}
+
+.civic-hero-character {
+  position: absolute;
+  bottom: 47px;
+  left: 39%;
+  z-index: 2;
+  font-size: clamp(74px, 9vw, 112px);
+  filter: drop-shadow(0 7px 2px #17395a1b);
+}
+
+.civic-hero-phone {
+  position: absolute;
+  right: 17%;
+  bottom: 73px;
+  z-index: 3;
+  padding: 8px;
+  border: 1px solid #d8e7fa;
+  border-radius: 13px;
+  background: white;
+  font-size: 26px;
+}
+
+.civic-hero-plant {
+  position: absolute;
+  bottom: 35px;
+  font-size: 35px;
+}
+
+.plant-one {
+  left: 8%;
+}
+
+.plant-two {
+  right: 7%;
+}
+
+.civic-floating-label {
+  position: absolute;
+  bottom: 13px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid #e3ecf8;
+  border-radius: 12px;
+  color: #235276;
+  background: #fff;
+  box-shadow: 0 7px 18px #23456b12;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.civic-floating-label svg {
+  color: #0ca88c;
+}
+
+.civic-steps-section {
+  padding: 44px clamp(18px, 5vw, 72px) 38px;
+  background: #fff;
+}
+
+.civic-section-heading {
+  margin: 0 auto 27px;
+  text-align: center;
+}
+
+.civic-section-heading h2 {
+  margin: 10px 0;
+  font-size: clamp(25px, 3vw, 38px);
+  line-height: 1.2;
+  letter-spacing: -1px;
+}
+
+.civic-section-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.civic-steps-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.civic-step-card {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: #fff;
+  box-shadow: 0 9px 28px #18375b08;
+}
+
+.civic-step-number {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  color: #1260ee;
+  background: #e0edff;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.civic-step-art {
+  position: relative;
+  height: 155px;
+  overflow: hidden;
+  isolation: isolate;
+  background: #eaf4ff;
+}
+
+.civic-step-review .civic-step-art {
+  background: #f1ebff;
+}
+
+.civic-step-assign .civic-step-art {
+  background: #e5f8ef;
+}
+
+.civic-step-follow .civic-step-art {
+  background: #e9f5ff;
+}
+
+.civic-art-sun {
+  position: absolute;
+  top: 24px;
+  right: 14%;
+  width: 35px;
+  height: 35px;
+  border-radius: 50%;
+  background: #ffdc89;
+  z-index: -1;
+}
+
+.civic-art-city {
+  position: absolute;
+  bottom: 10px;
+  left: 3%;
+  font-size: 65px;
+  filter: saturate(0.8);
+}
+
+.civic-art-character {
+  position: absolute;
+  right: 22%;
+  bottom: 10px;
+  z-index: 2;
+  font-size: 62px;
+  filter: drop-shadow(0 5px 2px #18375b16);
+}
+
+.civic-art-object {
+  position: absolute;
+  top: 30px;
+  right: 9%;
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border: 2px solid #fff;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 5px 15px #17375b15;
+  font-size: 23px;
+}
+
+.civic-art-check {
+  position: absolute;
+  top: 18px;
+  left: 23%;
+  color: #0eaf87;
+}
+
+.art-review .civic-art-character {
+  right: 12%;
+}
+
+.art-review .civic-art-object {
+  top: 47px;
+  left: 39%;
+  right: auto;
+  width: 82px;
+  height: 54px;
+  border-radius: 9px;
+  font-size: 29px;
+}
+
+.art-assign .civic-art-character {
+  right: 18%;
+}
+
+.art-follow .civic-art-character {
+  right: 13%;
+}
+
+.civic-step-content {
+  padding: 15px 13px 16px;
+}
+
+.civic-step-label {
+  color: #7890aa;
+  font-size: 9px;
+  font-weight: 850;
+  letter-spacing: 1.2px;
+}
+
+.civic-step-content h3 {
+  margin: 8px 0;
+  color: #173451;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.civic-step-content p {
+  min-height: 94px;
+  margin: 0;
+  color: #637b98;
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.civic-step-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: #168667;
+  background: #edfaf4;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.civic-process-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  max-width: 640px;
+  margin: 28px auto 0;
+  padding: 15px 18px;
+  border: 1px solid #dceafa;
+  border-radius: 14px;
+  background: #f5f9ff;
+}
+
+.civic-process-note > svg {
+  flex-shrink: 0;
+  color: var(--blue);
+}
+
+.civic-process-note p {
+  margin: 0;
+  color: #657c96;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.civic-process-note strong {
+  color: #193958;
+}
+
+.civic-final-card {
+  display: grid;
+  grid-template-columns: 0.7fr 1.3fr;
+  align-items: center;
+  gap: 22px;
+  margin: 0 clamp(18px, 5vw, 72px) 30px;
+  padding: 25px;
+  border: 1px solid #d8f3e6;
+  border-radius: 20px;
+  background: linear-gradient(115deg, #e9fbf2, #f6fffb);
+}
+
+.civic-final-art {
+  display: grid;
+  place-items: center;
+  min-height: 110px;
+  border-radius: 15px;
+  background: #dff7eb;
+  font-size: clamp(35px, 5vw, 57px);
+}
+
+.civic-final-card h2 {
+  margin: 9px 0;
+  font-size: clamp(22px, 3vw, 30px);
+  letter-spacing: -0.8px;
+}
+
+.civic-final-card p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.civic-how-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px clamp(18px, 5vw, 72px);
+  border-top: 1px solid #eaf0f8;
+  color: #71869e;
+  font-size: 11px;
+}
+
+.civic-how-footer strong {
+  color: #18375b;
+}
+
+/* Tablet */
+@media (max-width: 900px) {
+  .civic-how-hero {
+    grid-template-columns: 1fr 0.85fr;
+    gap: 15px;
+  }
+
+  .civic-steps-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .civic-step-art {
+    height: 185px;
+  }
+
+  .civic-step-content p {
+    min-height: 65px;
+    font-size: 12px;
+  }
+}
+
+/* Mobile: stacked infographic layout */
+@media (max-width: 600px) {
+  .civic-how-header {
+    min-height: 58px;
+    padding: 10px 15px;
+  }
+
+  .civic-how-brand {
+    font-size: 16px;
+  }
+
+  .civic-header-button {
+    padding: 9px;
+    font-size: 10px;
+  }
+
+  .civic-how-hero {
+    grid-template-columns: 1fr;
+    gap: 23px;
+    padding: 28px 18px 25px;
+  }
+
+  .civic-hero-copy h1 {
+    font-size: 39px;
+    letter-spacing: -1.5px;
+  }
+
+  .civic-hero-copy p {
+    max-width: 420px;
+    font-size: 13px;
+  }
+
+  .civic-hero-illustration {
+    min-height: 235px;
+  }
+
+  .civic-hero-character {
+    font-size: 91px;
+  }
+
+  .civic-hero-city {
+    font-size: 86px;
+  }
+
+  .civic-steps-section {
+    padding: 34px 15px;
+  }
+
+  .civic-section-heading {
+    margin-bottom: 22px;
+  }
+
+  .civic-section-heading h2 {
+    font-size: 28px;
+  }
+
+  .civic-section-heading p {
+    max-width: 310px;
+    margin: auto;
+  }
+
+  .civic-steps-list {
+    grid-template-columns: 1fr;
+    gap: 18px;
+    max-width: 390px;
+    margin: auto;
+  }
+
+  .civic-step-card {
+    display: grid;
+    grid-template-columns: 42% 1fr;
+    align-items: stretch;
+    border-radius: 15px;
+  }
+
+  .civic-step-art {
+    height: 100%;
+    min-height: 205px;
+  }
+
+  .civic-step-content {
+    padding: 15px 12px;
+  }
+
+  .civic-step-content h3 {
+    font-size: 14px;
+  }
+
+  .civic-step-content p {
+    min-height: 0;
+    font-size: 11px;
+    line-height: 1.65;
+  }
+
+  .civic-step-tag {
+    align-items: flex-start;
+    font-size: 9px;
+    line-height: 1.4;
+  }
+
+  .civic-art-city {
+    left: -10px;
+    bottom: 10px;
+    font-size: 49px;
+  }
+
+  .civic-art-character {
+    right: 7%;
+    bottom: 16px;
+    font-size: 49px;
+  }
+
+  .civic-art-object {
+    top: 58px;
+    right: 10%;
+    width: 35px;
+    height: 35px;
+    font-size: 19px;
+  }
+
+  .art-review .civic-art-object {
+    left: 10%;
+    top: 60px;
+    width: 52px;
+    height: 43px;
+    font-size: 24px;
+  }
+
+  .civic-process-note {
+    align-items: flex-start;
+    margin-top: 23px;
+    padding: 13px;
+  }
+
+  .civic-final-card {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin: 0 15px 22px;
+    padding: 18px;
+  }
+
+  .civic-final-art {
+    min-height: 90px;
+  }
+
+  .civic-how-footer {
+    flex-direction: column;
+    padding: 19px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .civic-primary-button {
+    transition: none;
+  }
+}
+
+
