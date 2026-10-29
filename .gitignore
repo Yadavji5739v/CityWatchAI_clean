@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 uploads/
 data/*.db
+models
 data/*.sqlite3
 
 
