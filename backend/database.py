@@ -7,6 +7,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
+import threading
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
