@@ -676,14 +676,7 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
     location = str(payload.get("location") or "").strip() or str(payload.get("location_text") or "").strip()
     description = str(payload.get("description") or "").strip()
     priority = str(payload.get("priority") or "Needs Review").strip() or "Needs Review"
-<<<<<<< HEAD
     complaint_status = "Pending Review"
-=======
-    support_existing_id = str(payload.get("support_existing_id") or "").strip() or None
-    complaint_status = "Supported" if support_existing_id else "Pending Review"
-    latitude = payload.get("latitude")
-    longitude = payload.get("longitude")
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
     if not title or len(title) < 3:
         raise HTTPException(status_code=400, detail="Complaint title is required and must be at least 3 characters long.")

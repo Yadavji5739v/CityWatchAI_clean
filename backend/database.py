@@ -3,11 +3,6 @@ import logging
 import os
 import re
 import sqlite3
-<<<<<<< HEAD
-=======
-import threading
-from urllib.parse import urlparse
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
 from contextlib import contextmanager
 from pathlib import Path
@@ -35,7 +30,6 @@ _CONNECTION_POOL = None
 _CONNECTION_POOL_LOCK = threading.Lock()
 
 
-<<<<<<< HEAD
 def _normalize_db_name(raw_name: str | None) -> str:
     cleaned = (raw_name or "").strip()
 
@@ -71,29 +65,6 @@ DATABASE_PASSWORD = (
 DATABASE_NAME = _normalize_db_name(
     os.getenv("CITYWATCH_DB_NAME", "citywatch_ai")
 )
-=======
-DATABASE_HOST = (os.getenv("SUPABASE_DB_HOST", "") or "").strip()
-
-DATABASE_PORT = int((os.getenv("SUPABASE_DB_PORT", "5432") or "5432").strip())
-
-DATABASE_USER = (
-    os.getenv("SUPABASE_DB_USER", "postgres") or "postgres"
-).strip()
-
-DATABASE_PASSWORD = (
-    os.getenv("SUPABASE_DB_PASSWORD", "") or ""
-).strip()
-
-DATABASE_NAME = (os.getenv("SUPABASE_DB_NAME", "postgres") or "postgres").strip()
-DATABASE_SCHEMA = (os.getenv("SUPABASE_DB_SCHEMA", "citywatch") or "citywatch").strip()
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-DATABASE_POOL_MAX = max(2, int(os.getenv("DATABASE_POOL_MAX", "8")))
-if DATABASE_URL and urlparse(DATABASE_URL).path.strip("/"):
-    DATABASE_NAME = urlparse(DATABASE_URL).path.strip("/")
-
-if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", DATABASE_SCHEMA):
-    raise ValueError("Invalid SUPABASE_DB_SCHEMA in backend/.env.")
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
 
 # ============================================================
@@ -106,7 +77,6 @@ def ensure_storage() -> None:
 
 
 # ============================================================
-<<<<<<< HEAD
 # MYSQL CONNECTION
 # ============================================================
 
@@ -115,42 +85,6 @@ def _connection_settings() -> dict:
         raise RuntimeError(
             "CITYWATCH_DB_USER is not configured. "
             "Set MySQL connection values in backend/.env."
-=======
-# POSTGRESQL CONNECTION
-# ============================================================
-
-class PostgresConnection:
-    def __init__(self, connection, pool):
-        self._connection = connection
-        self._pool = pool
-
-    def cursor(self, dictionary: bool = False):
-        if dictionary:
-            return self._connection.cursor(cursor_factory=RealDictCursor)
-        return self._connection.cursor()
-
-    def start_transaction(self) -> None:
-        with self._connection.cursor() as cursor:
-            cursor.execute("BEGIN")
-
-    def commit(self) -> None:
-        self._connection.commit()
-
-    def rollback(self) -> None:
-        self._connection.rollback()
-
-    def close(self) -> None:
-        try:
-            self._pool.putconn(self._connection, close=bool(self._connection.closed))
-        except PoolError:
-            self._connection.close()
-
-
-def _connect() -> PostgresConnection:
-    if not DATABASE_URL and not DATABASE_PASSWORD:
-        raise RuntimeError(
-            "DATABASE_URL or SUPABASE_DB_PASSWORD is not configured."
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
         )
     if not DATABASE_URL and not DATABASE_HOST:
         raise RuntimeError("Set DATABASE_URL or SUPABASE_DB_HOST before starting the backend.")
@@ -211,16 +145,10 @@ def close_connection_pool() -> None:
             _CONNECTION_POOL = None
 
 @contextmanager
-<<<<<<< HEAD
 def get_connection() -> Iterator[mysql.connector.MySQLConnection]:
     """Provide a MySQL connection with commit and rollback handling."""
 
     connection = mysql.connector.connect(**_connection_settings())
-=======
-def get_connection() -> Iterator[PostgresConnection]:
-    """Provide a transactional connection to the CityWatch Supabase schema."""
-    connection = _connect()
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
     try:
         yield connection
@@ -235,7 +163,6 @@ def get_connection() -> Iterator[PostgresConnection]:
 
 
 def ensure_database() -> None:
-<<<<<<< HEAD
     """Create the MySQL database if it does not already exist."""
 
     try:
@@ -264,17 +191,6 @@ def ensure_database() -> None:
                 """
             )
 
-=======
-    """Ensure the backend's isolated schema exists in the Supabase database."""
-    connection = _connect()
-    try:
-        cursor = connection.cursor()
-        try:
-            cursor.execute(f'CREATE SCHEMA IF NOT EXISTS "{DATABASE_SCHEMA}"')
-            connection.commit()
-        finally:
-            cursor.close()
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
     finally:
         connection.close()
 
@@ -284,11 +200,7 @@ def ensure_database() -> None:
 # ============================================================
 
 def _migrate_legacy_sqlite(
-<<<<<<< HEAD
     connection: mysql.connector.MySQLConnection
-=======
-    connection: PostgresConnection
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 ) -> None:
     """
     Import existing complaints from the old SQLite database.
@@ -297,11 +209,7 @@ def _migrate_legacy_sqlite(
     The location field is preserved.
 
     Optional SQLite fields are handled safely.
-<<<<<<< HEAD
     Existing MySQL complaint IDs are not duplicated.
-=======
-    Existing PostgreSQL complaint IDs are not duplicated.
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
     """
 
     if not LEGACY_DB_PATH.exists():
@@ -375,11 +283,7 @@ def _migrate_legacy_sqlite(
 
                 return default
 
-<<<<<<< HEAD
             # Match exactly 11 MySQL columns and 11 values.
-=======
-            # Map the legacy SQLite complaint row into the current PostgreSQL schema.
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
             migration_values = []
 
             for row in rows:
@@ -401,21 +305,13 @@ def _migrate_legacy_sqlite(
                     )
                 )
 
-<<<<<<< HEAD
         # Insert legacy records into MySQL.
-=======
-        # Insert legacy records into PostgreSQL.
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
         cursor = connection.cursor()
 
         try:
             cursor.executemany(
                 """
-<<<<<<< HEAD
                 INSERT IGNORE INTO complaints (
-=======
-                INSERT INTO complaints (
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
                     id,
                     title,
                     category,
@@ -432,10 +328,6 @@ def _migrate_legacy_sqlite(
                     %s, %s, %s, %s, %s, %s,
                     %s, %s, %s, %s, %s
                 )
-<<<<<<< HEAD
-=======
-                ON CONFLICT (id) DO NOTHING
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
                 """,
                 migration_values,
             )
@@ -456,11 +348,7 @@ def _migrate_legacy_sqlite(
 
 
 # ============================================================
-<<<<<<< HEAD
 # MYSQL SCHEMA HELPERS
-=======
-# POSTGRESQL SCHEMA HELPERS
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 # ============================================================
 
 def _ensure_complaint_column(
@@ -486,17 +374,10 @@ def _ensure_complaint_column(
     cursor.execute(
         """
         SELECT COUNT(*) AS column_count
-<<<<<<< HEAD
         FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = %s
           AND TABLE_NAME = 'complaints'
           AND COLUMN_NAME = %s
-=======
-                FROM information_schema.columns
-                WHERE table_schema = %s
-                    AND table_name = 'complaints'
-                    AND column_name = %s
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
         """,
                 (DATABASE_SCHEMA, column_name),
     )
@@ -514,40 +395,13 @@ def _ensure_complaint_column(
         logger.info("Added missing complaints column: %s", column_name)
 
 
-<<<<<<< HEAD
-=======
-def _ensure_complaint_foreign_keys(cursor) -> None:
-    """Add forward-only complaint references without rejecting older orphan rows."""
-    constraints = (
-        ("complaints_created_by_user_fk", "created_by_user_id", "users(id)"),
-        ("complaints_assigned_department_fk", "assigned_department_id", "departments(id)"),
-        ("complaints_assigned_officer_fk", "assigned_officer_id", "users(id)"),
-    )
-    for constraint_name, column_name, target in constraints:
-        cursor.execute(
-            "SELECT 1 FROM pg_constraint WHERE conname = %s AND conrelid = 'complaints'::regclass",
-            (constraint_name,),
-        )
-        if cursor.fetchone():
-            continue
-        cursor.execute(
-            f"ALTER TABLE complaints ADD CONSTRAINT {constraint_name} "
-            f"FOREIGN KEY ({column_name}) REFERENCES {target} NOT VALID"
-        )
-
-
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 # ============================================================
 # DATABASE INITIALIZATION
 # ============================================================
 
 def init_db() -> None:
     """
-<<<<<<< HEAD
     Initialize CityWatch AI MySQL tables.
-=======
-    Initialize CityWatch AI PostgreSQL tables.
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
     This function is safe to call on application startup.
     Existing tables and complaint records are preserved.
@@ -555,7 +409,6 @@ def init_db() -> None:
 
     logger.info("Initializing CityWatch AI database...")
 
-<<<<<<< HEAD
     ensure_storage()
     ensure_database()
 
@@ -931,85 +784,5 @@ def init_db() -> None:
 
         # Migrate old SQLite complaints after MySQL tables exist.
         _migrate_legacy_sqlite(connection)
-=======
-    ensure_database()
-
-    with get_connection() as connection:
-        cursor = connection.cursor()
-        try:
-            schema_path = BASE_DIR / "database" / "citywatch_schema.sql"
-            schema_sql = schema_path.read_text(encoding="utf-8")
-            for statement in schema_sql.split(";"):
-                if statement.strip():
-                    cursor.execute(statement)
-
-            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254)")
-            cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(32)")
-            cursor.execute("ALTER TABLE evidence_files ADD COLUMN IF NOT EXISTS sha256 CHAR(64)")
-            cursor.execute("ALTER TABLE evidence_files ADD COLUMN IF NOT EXISTS perceptual_hash CHAR(16)")
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_evidence_sha256 ON evidence_files (sha256) "
-                "WHERE sha256 IS NOT NULL"
-            )
-            cursor.execute(
-                "CREATE TABLE IF NOT EXISTS complaint_supports ("
-                "supporting_complaint_id VARCHAR(40) PRIMARY KEY REFERENCES complaints(id), "
-                "canonical_complaint_id VARCHAR(40) NOT NULL REFERENCES complaints(id), "
-                "supported_by_user_id VARCHAR(40) NOT NULL REFERENCES users(id), "
-                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
-                "CHECK (supporting_complaint_id <> canonical_complaint_id))"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_complaint_supports_canonical "
-                "ON complaint_supports (canonical_complaint_id)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_evidence_sha256 ON evidence_files (sha256) "
-                "WHERE sha256 IS NOT NULL"
-            )
-            cursor.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique
-                ON users (LOWER(email))
-                WHERE email IS NOT NULL
-                """
-            )
-
-            for column_name, column_definition in (
-                ("assigned_department_id", "CHAR(36) NULL"),
-                ("assigned_officer_id", "VARCHAR(40) NULL"),
-                ("due_date", "DATE NULL"),
-                ("assignment_instructions", "TEXT NULL"),
-                ("created_by_user_id", "VARCHAR(40) NULL"),
-            ):
-                _ensure_complaint_column(cursor, column_name, column_definition)
-            _ensure_complaint_foreign_keys(cursor)
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_complaints_created_by_user "
-                "ON complaints (created_by_user_id, created_at DESC)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_evidence_sha256 "
-                "ON evidence_files (sha256) WHERE sha256 IS NOT NULL"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_complaints_status_normalized_created "
-                "ON complaints (LOWER(REPLACE(TRIM(status), '_', ' ')), created_at DESC)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_complaints_assigned_officer_status "
-                "ON complaints (assigned_officer_id, LOWER(TRIM(status)), created_at DESC)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_complaints_assigned_department_status "
-                "ON complaints (assigned_department_id, LOWER(TRIM(status)), created_at DESC)"
-            )
-        finally:
-            cursor.close()
-
-        # Legacy imports are explicit so a production deploy never silently changes data.
-        if os.getenv("CITYWATCH_IMPORT_LEGACY_SQLITE", "false").lower() == "true":
-            _migrate_legacy_sqlite(connection)
->>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
     logger.info("CityWatch AI database initialized successfully.")
