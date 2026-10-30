@@ -41,6 +41,9 @@ class FakeConnection:
     def start_transaction(self):
         pass
 
+    def commit(self):
+        pass
+
     def cursor(self, dictionary=False):
         assert dictionary
         return self.test_cursor
@@ -62,6 +65,7 @@ async def test_officer_can_approve_and_route_pending_complaint(monkeypatch):
         "status": "Verified",
         "assigned_department_id": "drainage",
         "department": "Drainage Department",
+        "department_name": "Drainage Department",
     }
     update = next(
         (query, parameters)
@@ -131,6 +135,7 @@ def test_officer_assignments_include_ai_routed_pending_department_queue(monkeypa
     assert result == []
     query, parameters = connection.test_cursor.statements[0]
     assert "UNION ALL" in query
+    assert "a.assigned_at::text AS assigned_at" in query
     assert "LOWER(REPLACE(TRIM(c.status), '_', ' ')) = 'pending review'" in query
     assert "ORDER BY analysis.id DESC LIMIT 1" in query
     assert "LOWER(TRIM(ai.analysis_status)) = 'completed'" in query
@@ -150,6 +155,7 @@ async def test_officer_complaints_are_scoped_to_their_department(monkeypatch):
     })
 
     query, parameters = connection.test_cursor.statements[0]
-    assert "c.assigned_department_id IS NULL" in query
+    assert "c.assigned_department_id = %s" in query
+    assert "c.assigned_department_id IS NOT NULL AND %s IS NULL" in query
     assert "LOWER(TRIM(c.status)) = 'verified'" in query
-    assert parameters == ("roads-department", "officer-1", "roads-department")
+    assert parameters == ("officer-1", "roads-department", "roads-department")

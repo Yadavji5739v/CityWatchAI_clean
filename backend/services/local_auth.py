@@ -1,17 +1,19 @@
-"""MySQL-backed demo login and signed API sessions."""
+"""PostgreSQL-backed login and signed API sessions."""
 
 import base64
 import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 import uuid
 from typing import Optional
 
+import psycopg2
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from database import BASE_DIR, get_connection
 
@@ -30,8 +32,39 @@ DEMO_DEPARTMENTS = (
 
 
 class LoginRequest(BaseModel):
-    id: str = Field(min_length=3, max_length=40)
+    id: str = Field(min_length=3, max_length=254)
     password: str = Field(min_length=1, max_length=200)
+
+
+class SignupRequest(BaseModel):
+    full_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(min_length=5, max_length=254)
+    mobile: str = Field(min_length=7, max_length=32)
+    password: str = Field(min_length=8, max_length=200)
+
+    @field_validator("full_name")
+    @classmethod
+    def normalize_full_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if len(value) < 2:
+            raise ValueError("Enter your full name.")
+        return value
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("Enter a valid email address.")
+        return value
+
+    @field_validator("mobile")
+    @classmethod
+    def validate_mobile(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[+0-9()\-\s]{7,32}", value) or sum(char.isdigit() for char in value) < 7:
+            raise ValueError("Enter a valid mobile number.")
+        return value
 
 
 def _urlsafe_encode(value: bytes) -> str:
@@ -43,11 +76,11 @@ def _urlsafe_decode(value: str) -> bytes:
 
 
 def _signing_secret() -> bytes:
-    configured_secret = os.getenv("CITYWATCH_JWT_SECRET")
+    configured_secret = os.getenv("SECRET_KEY") or os.getenv("CITYWATCH_JWT_SECRET")
     if configured_secret:
         secret = configured_secret.encode("utf-8")
         if len(secret) < 32:
-            raise RuntimeError("CITYWATCH_JWT_SECRET must contain at least 32 characters.")
+            raise RuntimeError("SECRET_KEY / CITYWATCH_JWT_SECRET must contain at least 32 characters.")
         return secret
 
     secret_path = BASE_DIR / "data" / ".jwt_secret"
@@ -131,11 +164,13 @@ def _department_id(slug: str) -> str:
 
 def init_demo_accounts() -> None:
     """Create sample identities and departments once without overwriting real records."""
+    if os.getenv("ENVIRONMENT", "development").lower() == "production" and os.getenv("CITYWATCH_SEED_DEMO_ACCOUNTS", "false").lower() != "true":
+        return
     with get_connection() as connection:
         cursor = connection.cursor()
         try:
             cursor.executemany(
-                "INSERT IGNORE INTO departments (id, name, is_active) VALUES (%s, %s, 1)",
+                "INSERT INTO departments (id, name, is_active) VALUES (%s, %s, 1) ON CONFLICT (id) DO NOTHING",
                 [(_department_id(slug), name) for slug, name in DEMO_DEPARTMENTS],
             )
 
@@ -166,9 +201,10 @@ def init_demo_accounts() -> None:
             if missing_users:
                 cursor.executemany(
                     """
-                    INSERT IGNORE INTO users
+                    INSERT INTO users
                         (id, full_name, role, department_id, password_hash, is_active, is_demo)
                     VALUES (%s, %s, %s, %s, %s, 1, 1)
+                    ON CONFLICT (id) DO NOTHING
                     """,
                     missing_users,
                 )
@@ -216,9 +252,11 @@ def login(request: LoginRequest):
             cursor.execute(
                 """
                 SELECT id, full_name, role, department_id, password_hash, is_active
-                FROM users WHERE id = %s
+                FROM users
+                WHERE id = %s OR LOWER(email) = LOWER(%s)
+                LIMIT 1
                 """,
-                (request.id.strip(),),
+                (request.id.strip(), request.id.strip()),
             )
             user = cursor.fetchone()
         finally:
@@ -234,6 +272,60 @@ def login(request: LoginRequest):
         "department_id": user["department_id"],
     }
     return {"access_token": _create_token(public_user), "token_type": "bearer", "user": public_user}
+
+
+@router.post("/register", status_code=status.HTTP_201_CREATED)
+def register(request: SignupRequest):
+    account_id = f"CW-CIT-{secrets.token_hex(4).upper()}"
+
+    try:
+        with get_connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    "SELECT id FROM users WHERE LOWER(email) = LOWER(%s)",
+                    (request.email,),
+                )
+                if cursor.fetchone():
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An account with this email already exists.",
+                    )
+
+                cursor.execute(
+                    """
+                    INSERT INTO users (
+                        id, full_name, email, phone, role, password_hash,
+                        is_active, is_demo
+                    ) VALUES (%s, %s, %s, %s, 'citizen', %s, 1, 0)
+                    """,
+                    (
+                        account_id,
+                        request.full_name,
+                        request.email,
+                        request.mobile,
+                        hash_password(request.password),
+                    ),
+                )
+            finally:
+                cursor.close()
+    except psycopg2.errors.UniqueViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        ) from exc
+
+    public_user = {
+        "id": account_id,
+        "name": request.full_name,
+        "role": "citizen",
+        "department_id": None,
+    }
+    return {
+        "access_token": _create_token(public_user),
+        "token_type": "bearer",
+        "user": public_user,
+    }
 
 
 @router.get("/me")

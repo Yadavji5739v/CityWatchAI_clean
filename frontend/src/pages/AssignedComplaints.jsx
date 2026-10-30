@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { ArrowUpRight, CheckCheck, Clock3, LoaderCircle, MapPin } from "lucide-react";
 import { Link } from "react-router-dom";
+import { API_BASE_URL } from "../lib/api";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+
 
 async function fetchAssignments(signal) {
   const response = await fetch(`${API_BASE_URL}/assignments`, {
@@ -105,6 +106,7 @@ export default function AssignedComplaints() {
                   <th>Complaint</th>
                   <th>Category</th>
                   <th>Location</th>
+                  <th>Department</th>
                   <th>Priority</th>
                   <th>Assignment date</th>
                   <th>Due date</th>
@@ -119,6 +121,7 @@ export default function AssignedComplaints() {
                     <td>{assignment.title}</td>
                     <td>{assignment.category}</td>
                     <td><span className="location-cell"><MapPin size={14} />{assignment.location || "Not provided"}</span></td>
+                    <td>{assignment.department_name || "Awaiting review"}</td>
                     <td>{assignment.priority}</td>
                     <td>{assignment.assigned_at ? new Date(assignment.assigned_at).toLocaleDateString() : "—"}</td>
                     <td>{assignment.due_date ? new Date(`${assignment.due_date}T00:00:00`).toLocaleDateString() : "—"}</td>

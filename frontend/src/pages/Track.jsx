@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 
 import trackHero from "../assets/gemini1.png";
-import trackIllustration from "../assets/gemini2.png";
+import trackHero1 from "../assets/whats.jpeg";
+import trackIllustration1 from "../assets/whats1.jpeg";
 import "./Track.css";
 
 const DEMO_REFERENCE = "CW-2026-00123";
@@ -304,7 +305,7 @@ export default function Track() {
             <article className="track-evidence-card">
               <div className="track-evidence-image">
                 <img
-                  src={trackHero}
+                  src={trackHero1}
                   alt="Illustrative image of the previous condition"
                 />
                 <span className="track-evidence-before">BEFORE</span>
@@ -327,7 +328,7 @@ export default function Track() {
             <article className="track-evidence-card">
               <div className="track-evidence-image">
                 <img
-                  src={trackIllustration}
+                  src={trackIllustration1}
                   alt="Illustrative image of the current condition"
                 />
                 <span className="track-evidence-after">AFTER</span>

@@ -1,5 +1,9 @@
+<<<<<<< HEAD
 
 """MySQL-backed complaint assignment, progress, and notification routes."""
+=======
+"""PostgreSQL-backed complaint assignment, progress, and notification routes."""
+>>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
 import json
 import uuid
@@ -130,6 +134,7 @@ def get_assignments(
 
         try:
             query = """
+<<<<<<< HEAD
                 SELECT
                     a.id AS assignment_id,
                     a.complaint_id,
@@ -151,6 +156,14 @@ def get_assignments(
                     a.reassignment_reason,
                     0 AS department_queue
 
+=======
+                SELECT a.id AS assignment_id, a.complaint_id, c.title,
+                       c.category, c.location, c.latitude, c.longitude,
+                       c.priority, c.status, a.assigned_at::text AS assigned_at, a.due_date,
+                       a.instructions, a.department_id, d.name AS department_name,
+                       a.officer_id, u.full_name AS officer_name, a.assigned_by,
+                       a.reassignment_reason, 0 AS department_queue
+>>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
                 FROM assignments a
 
                 JOIN complaints c
@@ -323,6 +336,7 @@ def assign_complaint(
                     detail="Selected department is not active."
                 )
 
+<<<<<<< HEAD
             # 3. Validate officer
             cursor.execute("""
                 SELECT id
@@ -358,6 +372,43 @@ def assign_complaint(
 
             active_assignment = cursor.fetchone()
 
+=======
+            cursor.execute(
+                "SELECT canonical_complaint_id FROM complaint_supports WHERE supporting_complaint_id = %s",
+                (complaint_id,),
+            )
+            support_link = cursor.fetchone()
+            issue_root_id = support_link["canonical_complaint_id"] if support_link else complaint_id
+            cursor.execute("SELECT id FROM complaints WHERE id = %s FOR UPDATE", (issue_root_id,))
+            cursor.fetchone()
+            cursor.execute(
+                """
+                SELECT a.id, a.complaint_id, a.officer_id, a.department_id
+                FROM assignments a
+                WHERE a.is_active = 1
+                                    AND (
+                                            a.complaint_id = %s
+                                            OR a.complaint_id IN (
+                                                    SELECT supporting_complaint_id
+                                                    FROM complaint_supports
+                                                    WHERE canonical_complaint_id = %s
+                                            )
+                                    )
+                FOR UPDATE
+                """,
+                (issue_root_id, issue_root_id),
+            )
+            issue_assignments = cursor.fetchall()
+            active_assignment = next(
+                (assignment for assignment in issue_assignments if assignment["complaint_id"] == complaint_id),
+                None,
+            )
+            if any(assignment["complaint_id"] != complaint_id for assignment in issue_assignments):
+                raise HTTPException(
+                    status_code=409,
+                    detail="This linked civic issue already has an active repair assignment.",
+                )
+>>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
             if active_assignment and (
                 active_assignment["officer_id"] == request.officer_id
                 and active_assignment["department_id"] == request.department_id

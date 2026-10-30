@@ -3,7 +3,7 @@ import { AlertTriangle, ArrowUpRight, ChartColumn, ClipboardList, Users } from "
 import { Link } from "react-router-dom";
 import AssignOfficerModal from "../components/AssignOfficerModal";
 
-export default function AdminDashboard({ complaints = [], stats, onComplaintUpdated }) {
+export default function AdminDashboard({ complaints = [], stats, loading = false, onComplaintUpdated }) {
   const [assignmentComplaint, setAssignmentComplaint] = useState(null);
   const cards = [
     { label: "Total complaints", value: stats?.total_complaints ?? complaints.length, icon: ClipboardList, color: "blue" },
@@ -28,7 +28,7 @@ export default function AdminDashboard({ complaints = [], stats, onComplaintUpda
           <article className="stat-card" key={label}>
             <div className={`stat-icon ${color}`}><Icon size={20} /></div>
             <div className="stat-label">{label}</div>
-            <div className="stat-value">{value}</div>
+            <div className="stat-value">{loading && !stats ? "…" : value}</div>
           </article>
         ))}
       </section>

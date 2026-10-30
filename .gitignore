@@ -46,3 +46,5 @@ uploads/
 
 # Model caches
 .cache/
+
+.venv311/

@@ -13,8 +13,8 @@ The implemented application stack is:
 
 - **Frontend:** React, JavaScript/JSX, Vite, React Router, Lucide icons.
 - **Backend:** Python, FastAPI, Uvicorn.
-- **Primary application database:** MySQL, with schema creation and incremental column additions in the backend startup code.
-- **Evidence storage:** Local files under `backend/uploads/`; the MySQL database stores their metadata and relative paths.
+- **Primary application database:** Supabase PostgreSQL, using the isolated `citywatch` schema created by the backend at startup.
+- **Evidence storage:** Local files under `backend/uploads/`; PostgreSQL stores their metadata and relative paths.
 - **AI model artifacts:** Keras `.keras` files in `backend/models/`, with training and class-order information in `backend/notebooks/ab.ipynb`.
 
 `workflow.md` contains a broader desired product specification, including a Node/Express stack. That specification is not the implementation: the running backend in this workspace is FastAPI, not Express.
@@ -38,7 +38,7 @@ The reporting form in `frontend/src/pages/SubmitComplaint.jsx` collects:
 - Up to one video (50 MB) and five images (10 MB each).
 - Local previews and file removal before submission.
 
-The form submits multipart data to `POST /api/complaints`. The backend route in `backend/routes/complaints.py` validates the file extensions, MIME types, counts, and sizes; generates unique server-side filenames; stores evidence below `backend/uploads/evidence/`; and writes the evidence metadata to MySQL. The submitted evidence is analyzed during complaint creation where the selected category is supported.
+The form submits multipart data to `POST /api/complaints`. The backend route in `backend/routes/complaints.py` validates the file extensions, MIME types, counts, and sizes; generates unique server-side filenames; stores evidence below `backend/uploads/evidence/`; and writes the evidence metadata to Supabase PostgreSQL. The submitted evidence is analyzed during complaint creation where the selected category is supported.
 
 Complaint details fetch persisted data from the server. Evidence is streamed through authenticated endpoints, rather than exposing local disk paths:
 
@@ -77,13 +77,13 @@ The submission route records the result in `ai_analyses`, associates a confident
 
 ### AI runtime compatibility
 
-The `.keras` archive records `keras_version: 3.13.2` and its model configuration contains Keras 3 fields. The earlier TensorFlow 2.15.1/Keras 2.15 runtime failed to deserialize the model. The running API uses the project-root `.venv`; `backend/venv` is a separate environment and is not the environment used for the verified model load.
+The `.keras` archive records `keras_version: 3.13.2` and its model configuration contains Keras 3 fields. The earlier TensorFlow 2.15.1/Keras 2.15 runtime failed to deserialize the model. The running API uses the project-root `.venv312`; `backend/venv` is a separate environment and is not the environment used for the verified model load.
 
-The dependency pin and setup guide are aligned to TensorFlow 2.20.0 and Keras 3.13.2. The verified API environment is the project-root `.venv`; `backend/venv` is a separate environment and should not be assumed to contain the active dependencies. The compatible TensorFlow/Keras versions were installed in the project-root environment, and the bundled model was loaded and run against a temporary synthetic image. This verifies runtime compatibility and inference execution only; it does not establish prediction accuracy on real civic evidence. The model has not been retrained or calibrated on a new labeled dataset.
+The dependency pin and setup guide are aligned to TensorFlow 2.20.0 and Keras 3.13.2. The verified API environment is the project-root `.venv312`; `backend/venv` is a separate environment and should not be assumed to contain the active dependencies. The compatible TensorFlow/Keras versions were installed in the project-root environment, and the bundled model was loaded and run against a temporary synthetic image. This verifies runtime compatibility and inference execution only; it does not establish prediction accuracy on real civic evidence. The model has not been retrained or calibrated on a new labeled dataset.
 
 ## 5. Backend API and lifecycle
 
-The FastAPI application is assembled in `backend/main.py`. It registers complaint, evidence, assignment, AI, dashboard, and authentication routers, enables local Vite CORS origins, initializes the MySQL schema, and seeds demo accounts on startup.
+The FastAPI application is assembled in `backend/main.py`. It registers complaint, evidence, assignment, AI, dashboard, and authentication routers, enables local Vite CORS origins, initializes the Supabase PostgreSQL `citywatch` schema, and seeds local demo accounts on startup.
 
 Implemented local-application route groups include:
 
@@ -100,7 +100,7 @@ Assigned Complaints is a department-level review queue for eligible AI-routed co
 
 ## 6. Database and authentication
 
-`backend/database.py` connects to MySQL using `CITYWATCH_DB_HOST`, `CITYWATCH_DB_PORT`, `CITYWATCH_DB_USER`, `CITYWATCH_DB_PASSWORD`, and `CITYWATCH_DB_NAME`. At startup it creates tables when missing, adds selected complaint columns when needed, and can import older SQLite complaint rows without deleting the SQLite source.
+`backend/database.py` connects to Supabase PostgreSQL using `SUPABASE_DB_HOST`, `SUPABASE_DB_PORT`, `SUPABASE_DB_NAME`, `SUPABASE_DB_USER`, and `SUPABASE_DB_PASSWORD`. It creates application tables in a separate `citywatch` schema, leaving the Supabase `public` schema and Auth tables untouched. At startup it creates tables when missing, adds selected complaint columns when needed, and can import older SQLite complaint rows without deleting the SQLite source.
 
 Tables created by the local database initializer include:
 
@@ -113,9 +113,9 @@ Tables created by the local database initializer include:
 - `complaint_history`
 - `notifications`
 
-The local demo authentication implementation is in `backend/services/local_auth.py`. It hashes passwords using PBKDF2-HMAC-SHA256 and issues signed, expiring bearer tokens. The backend looks up the current user and role in MySQL on protected requests. Demo identities and departments are seeded without replacing existing rows.
+The local demo authentication implementation is in `backend/services/local_auth.py`. It hashes passwords using PBKDF2-HMAC-SHA256 and issues signed, expiring bearer tokens. The backend looks up the current user and role in PostgreSQL on protected requests. Demo identities and departments are seeded without replacing existing rows.
 
-The setup and local-run guide is `read.md`. It explains MySQL Server/Workbench setup, backend environment values, frontend/backend startup, and demo login accounts. Keep actual credentials in `backend/.env`; do not commit them.
+The setup and local-run guide is `read.md`. It explains Supabase PostgreSQL connection settings, backend environment values, frontend/backend startup, and demo login accounts. Keep actual credentials in `backend/.env`; do not commit them.
 
 ## 7. Work completed in this project conversation
 

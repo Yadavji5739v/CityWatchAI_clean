@@ -41,6 +41,9 @@ import {
   X,
   Inbox,
   CheckCheck,
+  Award,
+  BadgeCheck,
+  Users,
 } from "lucide-react";
 import "./index.css";
 import "./public-site.css";
@@ -49,9 +52,10 @@ import TrackResult from "./pages/TrackResult";
 // import {Route } from "react-router-dom";
 // import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import { API_BASE_URL } from "./lib/api";
 
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+
 
 function normalizeComplaint(item) {
   const statusValue = item?.status || "Submitted";
@@ -98,10 +102,11 @@ function readWithdrawnComplaintIds() {
   }
 }
 
-async function fetchComplaintsFromBackend(token) {
+async function fetchComplaintsFromBackend(token, signal) {
   try {
     const response = await fetch(`${API_BASE_URL}/complaints`, {
       headers: { Authorization: `Bearer ${token}` },
+      signal,
     });
     if (!response.ok) {
       throw new Error(`Request failed with status ${response.status}`);
@@ -123,7 +128,10 @@ function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const [complaints, setComplaints] = useState([]);
+  const [complaintsLoading, setComplaintsLoading] = useState(false);
   const [adminStats, setAdminStats] = useState(null);
+  const [citizenStats, setCitizenStats] = useState(null);
+  const [citizenStatsLoading, setCitizenStatsLoading] = useState(false);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [demoUser, setDemoUser] = useState(() => {
     try {
@@ -138,43 +146,95 @@ function AppShell() {
   });
 
   useEffect(() => {
-    if (["/", "/how-it-works", "/login"].includes(location.pathname)) {
+    if (!demoUser?.id) {
+      setComplaints([]);
+      setAdminStats(null);
+      setCitizenStats(null);
+      setComplaintsLoading(false);
       return undefined;
     }
 
     let isMounted = true;
+    const controller = new AbortController();
 
     async function loadComplaints() {
       const token = localStorage.getItem("citywatch_token");
       if (!token) return;
-      const backendComplaints = await fetchComplaintsFromBackend(token);
-      if (isMounted) {
-        setComplaints(backendComplaints);
-      }
-      if (isMounted && demoUser?.role === "admin") {
-        try {
-          const response = await fetch(`${API_BASE_URL}/dashboard/admin`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (!response.ok) throw new Error(`Admin dashboard request failed (${response.status}).`);
-          setAdminStats(await response.json());
-        } catch (error) {
-          console.error("Could not load administrator dashboard statistics:", error);
+      setComplaintsLoading(true);
+      try {
+        const statsRequest = demoUser.role === "admin"
+          ? fetch(`${API_BASE_URL}/dashboard/admin`, {
+              headers: { Authorization: `Bearer ${token}` },
+              signal: controller.signal,
+            }).then(async (response) => {
+              if (!response.ok) throw new Error(`Admin dashboard request failed (${response.status}).`);
+              return response.json();
+            }).catch((error) => {
+              if (!controller.signal.aborted) console.error("Could not load administrator statistics:", error);
+              return null;
+            })
+          : Promise.resolve(null);
+        const [backendComplaints, stats] = await Promise.all([
+          fetchComplaintsFromBackend(token, controller.signal),
+          statsRequest,
+        ]);
+        if (isMounted) {
+          setComplaints(backendComplaints);
+          setAdminStats(stats);
         }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error("Could not load CityWatch workspace data:", error);
+        }
+      } finally {
+        if (isMounted) setComplaintsLoading(false);
       }
     }
 
     loadComplaints();
     return () => {
       isMounted = false;
+      controller.abort();
     };
-  }, [location.pathname, demoUser?.role]);
+  }, [demoUser?.id, demoUser?.role]);
+
+  useEffect(() => {
+    if (demoUser?.role !== "citizen" || location.pathname !== "/dashboard") {
+      setCitizenStatsLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const token = localStorage.getItem("citywatch_token");
+    if (!token) return undefined;
+    setCitizenStatsLoading(true);
+    fetch(`${API_BASE_URL}/dashboard/citizen`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Citizen dashboard data could not be loaded.");
+        setCitizenStats(data);
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) console.error("Could not load citizen dashboard data:", error);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCitizenStatsLoading(false);
+      });
+    return () => controller.abort();
+  }, [demoUser?.id, demoUser?.role, location.pathname]);
 
   async function refreshComplaints() {
     const token = localStorage.getItem("citywatch_token");
     if (!token) return;
-    const backendComplaints = await fetchComplaintsFromBackend(token);
-    setComplaints(backendComplaints);
+    setComplaintsLoading(true);
+    try {
+      const backendComplaints = await fetchComplaintsFromBackend(token);
+      setComplaints(backendComplaints);
+    } finally {
+      setComplaintsLoading(false);
+    }
   }
 
   async function handleDemoLogin(accountId, password) {
@@ -196,7 +256,24 @@ function AppShell() {
     navigate(destination, { replace: true });
   }
 
-  async function handleSupabaseLogout() {
+  async function handleSignup(signupDetails) {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(signupDetails),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.detail || "Account creation failed. Please try again.");
+    }
+
+    localStorage.setItem("citywatch_token", data.access_token);
+    localStorage.setItem("citywatch_demo_user", JSON.stringify(data.user));
+    setDemoUser(data.user);
+    navigate("/dashboard", { replace: true });
+  }
+
+  async function handleLogout() {
     localStorage.removeItem("citywatch_demo_user");
     localStorage.removeItem("citywatch_token");
     setDemoUser(null);
@@ -273,14 +350,15 @@ function AppShell() {
           { to: "/my-complaints", label: "My Complaints", icon: Search },
         ];
 
-  if (["/", "/how-it-works", "/login", "/city-dashboard", "/report", "/track-report"].includes(location.pathname) && !demoUser) {
+  if (["/", "/how-it-works", "/login", "/signup", "/city-dashboard", "/report", "/track-report"].includes(location.pathname) && !demoUser) {
     return (
       <div className="public-site">
         <PublicNavbar />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/how-it-works" element={<HowItWorks />} />
-          <Route path="/login" element={<Login onLogin={handleDemoLogin} />} />
+          <Route path="/login" element={<Login onLogin={handleDemoLogin} onSignup={() => navigate("/signup")} />} />
+          <Route path="/signup" element={<Signup onSignup={handleSignup} />} />
           <Route path="/city-dashboard" element={<CityDashboard />} />
           <Route path="/report" element={<PublicReportWizard />} />
           <Route path="/track-report" element={<Track />} />
@@ -368,7 +446,7 @@ function AppShell() {
             {demoUser ? (
               <div className="demo-session-controls">
                 <span className="demo-session-label">{demoUser.name}</span>
-                <button type="button" className="secondary-button small" onClick={handleSupabaseLogout}>
+                <button type="button" className="secondary-button small" onClick={handleLogout}>
                   Sign out
                 </button>
               </div>
@@ -388,7 +466,7 @@ function AppShell() {
           <Routes>
             <Route path="/dashboard" element={
               <DemoRoleRoute user={demoUser} allow={["citizen"]}>
-                <Dashboard complaints={complaints} />
+                <Dashboard complaints={complaints} loading={complaintsLoading} points={citizenStats?.points} pointsLoading={citizenStatsLoading} />
               </DemoRoleRoute>
             } />
             <Route path="/report" element={
@@ -398,12 +476,12 @@ function AppShell() {
             } />
             <Route path="/complaints" element={
               <DemoRoleRoute user={demoUser} allow={["citizen"]}>
-                <ComplaintsPage complaints={complaints} />
+                <ComplaintsPage complaints={complaints} loading={complaintsLoading} />
               </DemoRoleRoute>
             } />
             <Route path="/my-complaints" element={
               <DemoRoleRoute user={demoUser} allow={["citizen"]}>
-                <MyComplaints complaints={complaints} onWithdraw={withdrawComplaint} />
+                <MyComplaints complaints={complaints} loading={complaintsLoading} onWithdraw={withdrawComplaint} />
               </DemoRoleRoute>
             } />
             <Route path="/my-complaints/:id" element={
@@ -420,13 +498,13 @@ function AppShell() {
               path="/officer"
               element={
                 <DemoRoleRoute user={demoUser} allow={["officer"]}>
-                  <OfficerDashboard complaints={complaints} />
+                  <OfficerDashboard complaints={complaints} loading={complaintsLoading} />
                 </DemoRoleRoute>
               }
             />
             <Route path="/officer/new" element={
               <DemoRoleRoute user={demoUser} allow={["officer"]}>
-                <OfficerComplaints complaints={complaints} view="new" />
+                <OfficerComplaints complaints={complaints} view="new" loading={complaintsLoading} onRefresh={refreshComplaints} />
               </DemoRoleRoute>
             } />
             <Route path="/officer/assigned" element={
@@ -436,12 +514,12 @@ function AppShell() {
             } />
             <Route path="/officer/pending" element={
               <DemoRoleRoute user={demoUser} allow={["officer"]}>
-                <OfficerComplaints complaints={complaints} view="pending" />
+                <OfficerComplaints complaints={complaints} view="pending" loading={complaintsLoading} onRefresh={refreshComplaints} />
               </DemoRoleRoute>
             } />
             <Route path="/officer/solved" element={
               <DemoRoleRoute user={demoUser} allow={["officer"]}>
-                <OfficerComplaints complaints={complaints} view="solved" />
+                <OfficerComplaints complaints={complaints} view="solved" loading={complaintsLoading} onRefresh={refreshComplaints} />
               </DemoRoleRoute>
             } />
             <Route
@@ -451,6 +529,7 @@ function AppShell() {
                   <AdminDashboard
                     complaints={complaints}
                     stats={adminStats}
+                    loading={complaintsLoading}
                     onComplaintUpdated={updateComplaint}
                   />
                 </DemoRoleRoute>
@@ -458,7 +537,7 @@ function AppShell() {
             />
             <Route path="/admin/complaints" element={
               <DemoRoleRoute user={demoUser} allow={["admin"]}>
-                <ComplaintsPage complaints={complaints} isAdmin />
+                <ComplaintsPage complaints={complaints} isAdmin loading={complaintsLoading} />
               </DemoRoleRoute>
             } />
             <Route path="*" element={<NotFound />} />
@@ -482,7 +561,7 @@ function PageHeading({ eyebrow, title, description, action }) {
   );
 }
 
-function Dashboard({ complaints }) {
+function Dashboard({ complaints, loading = false, points, pointsLoading = false }) {
   const pending = complaints.filter(
     (item) => item.status === "Pending Review"
   ).length;
@@ -568,10 +647,29 @@ function Dashboard({ complaints }) {
               <Icon size={21} />
             </div>
             <div className="stat-label">{label}</div>
-            <div className="stat-value">{value}</div>
+            <div className="stat-value">{loading ? "…" : value}</div>
             <div className="stat-note">{note}</div>
           </article>
         ))}
+      </section>
+
+      <section className="content-panel contribution-points-panel" aria-labelledby="contribution-points-title">
+        <div className="points-score-block">
+          <span className="points-award-icon"><Award size={22} /></span>
+          <div>
+            <div className="eyebrow">CITIZEN CONTRIBUTION</div>
+            <h2 id="contribution-points-title">Your impact points</h2>
+            <p>Points recognize reports that staff verify and citizens who support an existing issue.</p>
+          </div>
+          <div className="points-total" aria-live="polite">
+            <strong>{pointsLoading ? "…" : points?.total ?? 0}</strong><span>points</span>
+          </div>
+        </div>
+        <div className="points-breakdown">
+          <div><BadgeCheck size={17} /><span><strong>{pointsLoading ? "…" : points?.verified_reports ?? 0}</strong> verified reports <small>20 points each</small></span></div>
+          <div><Users size={17} /><span><strong>{pointsLoading ? "…" : points?.supported_reports ?? 0}</strong> reports supporting an existing issue <small>5 points each</small></span></div>
+        </div>
+        <p className="points-rule-note">Reports earn points after verification. Reports awaiting review do not earn points yet.</p>
       </section>
 
       <section className="content-panel">
@@ -584,21 +682,20 @@ function Dashboard({ complaints }) {
             View all <ArrowUpRight size={15} />
           </Link>
         </div>
-        <ComplaintTable complaints={complaints.slice(0, 5)} />
+        <ComplaintTable complaints={complaints.slice(0, 5)} loading={loading} />
       </section>
 
       <div className="disclaimer">
         <ShieldCheck size={17} />
         <span>
-          Demo mode: complaints are stored in temporary browser state.
-          AI verification and government routing are not connected yet.
+          Your reports are saved to CityWatch. AI analysis supports human review and does not replace it.
         </span>
       </div>
     </>
   );
 }
 
-function ComplaintsPage({ complaints, isAdmin = false }) {
+function ComplaintsPage({ complaints, isAdmin = false, loading = false }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("All");
 
@@ -643,8 +740,8 @@ function ComplaintsPage({ complaints, isAdmin = false }) {
             <option>Resolved</option>
           </select>
         </div>
-        <ComplaintTable complaints={filtered} />
-        {filtered.length === 0 && (
+        <ComplaintTable complaints={filtered} loading={loading} />
+        {!loading && filtered.length === 0 && (
           <div className="empty-state">
             <ClipboardList size={32} />
             <strong>No complaints found</strong>
@@ -656,7 +753,10 @@ function ComplaintsPage({ complaints, isAdmin = false }) {
   );
 }
 
-function ComplaintTable({ complaints }) {
+function ComplaintTable({ complaints, loading = false }) {
+  if (loading && complaints.length === 0) {
+    return <div className="empty-state" role="status"><strong>Loading complaints…</strong></div>;
+  }
   if (complaints.length === 0) {
     return (
       <div className="empty-state">

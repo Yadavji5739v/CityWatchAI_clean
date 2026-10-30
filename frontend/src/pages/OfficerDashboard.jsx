@@ -7,7 +7,7 @@ const demoTasks = [
   { id: "CW-1012", title: "Streetlight outage", priority: "High", status: "Waiting for evidence" },
 ];
 
-export default function OfficerDashboard({ complaints = demoTasks }) {
+export default function OfficerDashboard({ complaints = demoTasks, loading = false }) {
   const newComplaints = complaints.filter((item) =>
     ["Submitted", "Pending Review"].includes(item.status)
   );
@@ -30,25 +30,25 @@ export default function OfficerDashboard({ complaints = demoTasks }) {
         <article className="stat-card">
           <div className="stat-icon blue"><Inbox size={20} /></div>
           <div className="stat-label">New complaints</div>
-          <div className="stat-value">{newComplaints.length}</div>
+          <div className="stat-value">{loading ? "…" : newComplaints.length}</div>
           <Link to="/officer/new" className="officer-stat-link">Review queue <ArrowRight size={14} /></Link>
         </article>
         <article className="stat-card">
           <div className="stat-icon amber"><Clock3 size={20} /></div>
           <div className="stat-label">Pending complaints</div>
-          <div className="stat-value">{pendingComplaints.length}</div>
+          <div className="stat-value">{loading ? "…" : pendingComplaints.length}</div>
           <Link to="/officer/pending" className="officer-stat-link">View assigned work <ArrowRight size={14} /></Link>
         </article>
         <article className="stat-card">
           <div className="stat-icon green"><CheckCheck size={20} /></div>
           <div className="stat-label">Solved complaints</div>
-          <div className="stat-value">{solvedComplaints.length}</div>
+          <div className="stat-value">{loading ? "…" : solvedComplaints.length}</div>
           <Link to="/officer/solved" className="officer-stat-link">View completed <ArrowRight size={14} /></Link>
         </article>
         <article className="stat-card">
           <div className="stat-icon purple"><AlertTriangle size={20} /></div>
           <div className="stat-label">High priority</div>
-          <div className="stat-value">{complaints.filter((item) => item.priority === "High").length}</div>
+          <div className="stat-value">{loading ? "…" : complaints.filter((item) => item.priority === "High").length}</div>
           <div className="stat-note">Across available complaints</div>
         </article>
       </section>
@@ -86,7 +86,9 @@ export default function OfficerDashboard({ complaints = demoTasks }) {
               ))}
             </tbody>
           </table>
-          {pendingComplaints.length === 0 && (
+          {loading ? (
+            <div className="empty-state" role="status"><strong>Loading pending complaints…</strong></div>
+          ) : pendingComplaints.length === 0 && (
             <div className="empty-state">
               <Clock3 size={30} />
               <strong>No pending complaints</strong>

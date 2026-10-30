@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, Building2, CheckCircle2, CircleDot, ClipboardCheck, Eye, Image, MapPin, Send, UserRound } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
+import { API_BASE_URL } from "../lib/api";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+
 
 function stageState(status, stage) {
   const value = String(status || "").toLowerCase().replaceAll("_", " ");

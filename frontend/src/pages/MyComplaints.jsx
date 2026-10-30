@@ -14,7 +14,7 @@ function isWithdrawable(status) {
   );
 }
 
-export default function MyComplaints({ complaints = demoComplaints, onWithdraw }) {
+export default function MyComplaints({ complaints = demoComplaints, loading = false, onWithdraw }) {
   const [error, setError] = useState("");
 
   function handleWithdraw(complaint) {
@@ -42,6 +42,7 @@ export default function MyComplaints({ complaints = demoComplaints, onWithdraw }
       </div>
 
       <section className="content-panel">
+        {loading ? <div className="empty-state" role="status"><strong>Loading your reports…</strong></div> : (
         <div className="table-scroll">
           <table className="complaint-table">
             <thead>
@@ -98,6 +99,7 @@ export default function MyComplaints({ complaints = demoComplaints, onWithdraw }
             </div>
           )}
         </div>
+        )}
         {error && <div className="form-error withdraw-error" role="alert">{error}</div>}
         <p className="withdraw-note">You can withdraw a complaint before it is assigned. Withdrawn complaints remain in your history.</p>
       </section>

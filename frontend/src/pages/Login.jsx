@@ -262,7 +262,7 @@ export default function Login({ onLogin, onSignup }) {
         </div>
 
         <form className="auth-form" onSubmit={handleSubmit}>
-          <label htmlFor="login-account-id">Account ID</label>
+          <label htmlFor="login-account-id">Email or Account ID</label>
 
           <div className="auth-input-wrap">
             <KeyRound size={16} />
@@ -271,7 +271,7 @@ export default function Login({ onLogin, onSignup }) {
               id="login-account-id"
               name="accountId"
               type="text"
-              placeholder="e.g. CW-CIT-1001"
+              placeholder="you@example.com or CW-CIT-1001"
               autoComplete="username"
               value={accountId}
               onChange={(event) => setAccountId(event.target.value)}

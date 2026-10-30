@@ -2,16 +2,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  AlertTriangle,
+  Camera,
+  CameraOff,
   Image as ImageIcon,
   LocateFixed,
   MapPin,
   ShieldCheck,
   Trash2,
-  UploadCloud,
   Video,
   FileCheck2,
+  Users,
+  X,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../lib/api";
 
 const categoryOptions = [
   "Pothole",
@@ -29,9 +34,6 @@ const MAX_VIDEO_SIZE = 50 * 1024 * 1024;
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 const MAX_IMAGES = 5;
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
-
 function formatFileSize(bytes) {
   if (bytes < 1024 * 1024) {
     return `${(bytes / 1024).toFixed(0)} KB`;
@@ -46,13 +48,24 @@ export default function SubmitComplaint({ onSubmit }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(categoryOptions[0]);
   const [location, setLocation] = useState("");
+  const [coordinates, setCoordinates] = useState(null);
   const [description, setDescription] = useState("");
   const [evidenceFiles, setEvidenceFiles] = useState([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [duplicateMatches, setDuplicateMatches] = useState([]);
+  const [showDuplicateWarning, setShowDuplicateWarning] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const [openingCamera, setOpeningCamera] = useState(false);
+  const [capturingPhoto, setCapturingPhoto] = useState(false);
+  const [recordingVideo, setRecordingVideo] = useState(false);
+  const [cameraError, setCameraError] = useState("");
 
   const previewUrls = useRef(new Set());
+  const cameraVideoRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const videoChunksRef = useRef([]);
 
   useEffect(() => {
     return () => {
@@ -60,6 +73,18 @@ export default function SubmitComplaint({ onSubmit }) {
       previewUrls.current.clear();
     };
   }, []);
+
+  useEffect(() => {
+    if (!cameraStream || !cameraVideoRef.current) return undefined;
+    const video = cameraVideoRef.current;
+    video.srcObject = cameraStream;
+    video.play().catch(() => setCameraError("Camera preview could not start. Check camera permissions and try again."));
+    return () => {
+      if (mediaRecorderRef.current?.state !== "inactive") mediaRecorderRef.current?.stop();
+      cameraStream.getTracks().forEach((track) => track.stop());
+      if (video.srcObject === cameraStream) video.srcObject = null;
+    };
+  }, [cameraStream]);
 
   const imageCount = evidenceFiles.filter(({ file }) =>
     file.type.startsWith("image/")
@@ -90,6 +115,7 @@ async function useCurrentLocation() {
   navigator.geolocation.getCurrentPosition(
     async ({ coords }) => {
       const { latitude, longitude } = coords;
+      setCoordinates({ latitude, longitude });
 
       try {
         // Convert GPS coordinates into a readable address.
@@ -134,70 +160,125 @@ async function useCurrentLocation() {
 }
 
 
-  function handleEvidenceSelect(event) {
-    const selectedFiles = Array.from(event.target.files || []);
-
-    let currentImages = evidenceFiles.filter(({ file }) =>
-      file.type.startsWith("image/")
-    ).length;
-
-    let hasVideo = evidenceFiles.some(({ file }) =>
-      file.type.startsWith("video/")
-    );
-
-    const accepted = [];
-    let validationError = "";
-
-    for (const file of selectedFiles) {
-      if (file.type.startsWith("image/")) {
-        if (currentImages >= MAX_IMAGES) {
-          validationError = `You can upload a maximum of ${MAX_IMAGES} images.`;
-          continue;
-        }
-
-        if (file.size > MAX_IMAGE_SIZE) {
-          validationError = `${file.name} exceeds the 10 MB image limit.`;
-          continue;
-        }
-
-        currentImages += 1;
-
-        accepted.push({
-          file,
-          preview: URL.createObjectURL(file),
-        });
-      } else if (file.type.startsWith("video/")) {
-        if (hasVideo) {
-          validationError = "You can upload only one video.";
-          continue;
-        }
-
-        if (file.size > MAX_VIDEO_SIZE) {
-          validationError = `${file.name} exceeds the 50 MB video limit.`;
-          continue;
-        }
-
-        hasVideo = true;
-
-        accepted.push({
-          file,
-          preview: URL.createObjectURL(file),
-        });
-      } else {
-        validationError = `${file.name} is not a supported image or video.`;
-      }
+  async function startCamera() {
+    setCameraError("");
+    if (imageCount >= MAX_IMAGES) {
+      setCameraError(`You can capture up to ${MAX_IMAGES} photos.`);
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Live photos require camera access over HTTPS or localhost in a supported browser.");
+      return;
     }
 
-    accepted.forEach(({ preview }) => {
-      previewUrls.current.add(preview);
-    });
+    setOpeningCamera(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      setCameraStream(stream);
+    } catch (cameraFailure) {
+      setCameraError(cameraFailure?.name === "NotAllowedError"
+        ? "Camera permission was denied. Allow camera access in your browser settings and try again."
+        : "Could not start the camera. Check that it is available and try again.");
+    } finally {
+      setOpeningCamera(false);
+    }
+  }
 
-    if (accepted.length > 0) {
-      setEvidenceFiles((files) => [...files, ...accepted]);
+  function startVideoRecording() {
+    if (!cameraStream || videoCount > 0 || recordingVideo) return;
+    if (!window.MediaRecorder) {
+      setCameraError("Live video recording is not supported by this browser.");
+      return;
+    }
+    try {
+      const preferredType = ["video/webm;codecs=vp9", "video/webm", "video/mp4"]
+        .find((type) => MediaRecorder.isTypeSupported?.(type));
+      const recorder = new MediaRecorder(cameraStream, preferredType ? { mimeType: preferredType } : undefined);
+      videoChunksRef.current = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) videoChunksRef.current.push(event.data);
+      };
+      recorder.onerror = () => {
+        setCameraError("Video recording failed. Please try again.");
+        setRecordingVideo(false);
+      };
+      recorder.onstop = () => {
+        const recordedMimeType = (recorder.mimeType || videoChunksRef.current[0]?.type || "video/webm").split(";")[0].toLowerCase();
+        const mimeType = recordedMimeType === "video/mp4" ? "video/mp4" : "video/webm";
+        const blob = new Blob(videoChunksRef.current, { type: mimeType });
+        videoChunksRef.current = [];
+        if (!blob.size) return;
+        if (blob.size > MAX_VIDEO_SIZE) {
+          setCameraError("The recorded video exceeds the 50 MB limit. Record a shorter video.");
+          return;
+        }
+        const extension = mimeType === "video/mp4" ? "mp4" : "webm";
+        const file = new File([blob], `citywatch-live-${Date.now()}.${extension}`, { type: mimeType });
+        const preview = URL.createObjectURL(file);
+        previewUrls.current.add(preview);
+        setEvidenceFiles((files) => [...files.filter(({ file: existing }) => !existing.type.startsWith("video/")), { file, preview }]);
+      };
+      recorder.start(1000);
+      mediaRecorderRef.current = recorder;
+      setRecordingVideo(true);
+      setCameraError("");
+    } catch {
+      setCameraError("Could not start video recording. Check camera access and try again.");
+    }
+  }
+
+  function stopVideoRecording() {
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    mediaRecorderRef.current = null;
+    setRecordingVideo(false);
+  }
+
+  async function captureLivePhoto() {
+    if (capturingPhoto) return;
+    setCapturingPhoto(true);
+    try {
+    const video = cameraVideoRef.current;
+    if (!video?.videoWidth || !video?.videoHeight) {
+      setCameraError("Wait for the camera preview, then try again.");
+      return;
+    }
+    if (imageCount >= MAX_IMAGES) {
+      setCameraError(`You can capture up to ${MAX_IMAGES} photos.`);
+      return;
     }
 
-    setError(validationError);
-    event.target.value = "";
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError("Photo capture is not supported by this browser.");
+      return;
+    }
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const photoBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+    if (!photoBlob) {
+      setCameraError("The photo could not be captured. Please try again.");
+      return;
+    }
+    if (photoBlob.size > MAX_IMAGE_SIZE) {
+      setCameraError("This photo is larger than 10 MB. Move closer or use lower camera resolution.");
+      return;
+    }
+
+    const file = new File([photoBlob], `citywatch-live-${Date.now()}.jpg`, { type: "image/jpeg" });
+    const preview = URL.createObjectURL(file);
+    previewUrls.current.add(preview);
+    setEvidenceFiles((files) => [...files, { file, preview }]);
+    setCameraError("");
+    if (imageCount + 1 >= MAX_IMAGES) setCameraStream(null);
+    } finally {
+      setCapturingPhoto(false);
+    }
   }
 
   function removeEvidence(preview) {
@@ -211,69 +292,85 @@ async function useCurrentLocation() {
     setError("");
   }
 
+  function buildSubmissionFormData(supportExistingId = null, confirmNewComplaint = false) {
+    const formData = new FormData();
+    formData.append("title", title.trim());
+    formData.append("category", category);
+    formData.append("location", location.trim());
+    formData.append("description", description.trim());
+    formData.append("priority", "Needs Review");
+    formData.append("status", "Submitted");
+    if (coordinates) {
+      formData.append("latitude", String(coordinates.latitude));
+      formData.append("longitude", String(coordinates.longitude));
+    }
+    if (supportExistingId) formData.append("support_existing_id", supportExistingId);
+    if (confirmNewComplaint) formData.append("confirm_new_complaint", "true");
+    for (const { file } of evidenceFiles) formData.append("evidence", file, file.name);
+    return formData;
+  }
+
+  async function saveComplaint(supportExistingId = null, confirmNewComplaint = false) {
+    const token = localStorage.getItem("citywatch_token");
+    const response = await fetch(`${API_BASE_URL}/complaints`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: buildSubmissionFormData(supportExistingId, confirmNewComplaint),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (result.detail?.code === "duplicate_confirmation_required") {
+        setDuplicateMatches(result.detail.matches || []);
+        setShowDuplicateWarning(true);
+        return;
+      }
+      throw new Error(typeof result.detail === "string" ? result.detail : "Complaint submission failed.");
+    }
+
+    if (typeof onSubmit === "function") onSubmit(result);
+    navigate(`/details/${result.id}`, {
+      state: { from: "/complaints", submittedComplaint: result },
+    });
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
-
     if (!canSubmit) return;
 
     setSubmitting(true);
     setError("");
-
     try {
-      const formData = new FormData();
-
-      formData.append("title", title.trim());
-      formData.append("category", category);
-      formData.append("location", location.trim());
-      formData.append("description", description.trim());
-      formData.append("priority", "Needs Review");
-      formData.append("status", "Submitted");
-
-      // Images and videos are sent using the existing "evidence" field.
-      for (const { file } of evidenceFiles) {
-        formData.append("evidence", file, file.name);
-      }
-
       const token = localStorage.getItem("citywatch_token");
-
-      const headers = token
-        ? { Authorization: `Bearer ${token}` }
-        : {};
-
-      const response = await fetch(`${API_BASE_URL}/complaints`, {
+      const response = await fetch(`${API_BASE_URL}/complaints/check-duplicates`, {
         method: "POST",
-        headers,
-        body: formData,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: buildSubmissionFormData(),
       });
-
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(
-          message || "Complaint submission failed."
-        );
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "Could not check for similar complaints.");
+      if (result.matches?.length) {
+        setDuplicateMatches(result.matches);
+        setShowDuplicateWarning(true);
+        return;
       }
-
-      const savedComplaint = await response.json();
-
-      if (typeof onSubmit === "function") {
-        onSubmit(savedComplaint);
-      }
-
-      navigate(`/details/${savedComplaint.id}`, {
-        state: {
-          from: "/complaints",
-          submittedComplaint: savedComplaint,
-        },
-      });
+      await saveComplaint();
     } catch (submitError) {
       console.error("Complaint submission error:", submitError);
+      setError(submitError instanceof Error ? submitError.message : "Submission failed. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
-      const message =
-        submitError instanceof Error
-          ? submitError.message
-          : "Submission failed. Please try again.";
-
-      setError(message);
+  async function submitAfterDuplicateChoice(supportExistingId = null, confirmNewComplaint = false) {
+    setSubmitting(true);
+    setError("");
+    setShowDuplicateWarning(false);
+    try {
+      await saveComplaint(supportExistingId, confirmNewComplaint);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Submission failed. Please try again.");
+      setShowDuplicateWarning(true);
     } finally {
       setSubmitting(false);
     }
@@ -338,7 +435,10 @@ async function useCurrentLocation() {
               <MapPin size={18} />
               <input
                 value={location}
-                onChange={(event) => setLocation(event.target.value)}
+                onChange={(event) => {
+                  setLocation(event.target.value);
+                  setCoordinates(null);
+                }}
                 placeholder="Road, area, ward, or landmark"
                 required
                 maxLength={500}
@@ -371,50 +471,37 @@ async function useCurrentLocation() {
             />
           </label>
 
-          {/* SINGLE COMBINED EVIDENCE UPLOAD */}
+          {/* LIVE PHOTO AND VIDEO CAPTURE */}
           <div className="form-section-title evidence-title">
             <span className="step-number">02</span>
             <div>
-              <h2>Photo or video evidence</h2>
+              <h2>Live photo or video evidence</h2>
               <p>
-                Upload up to five images and one video using a single
-                upload area.
+                Allow camera access, then capture photos or record a video. File uploads are disabled.
               </p>
             </div>
           </div>
 
-          <label className="upload-zone single-upload-zone">
-            <UploadCloud size={34} />
-
-            <strong>Upload Photos or Videos</strong>
-
-            <span>
-              Click here to select images and videos from your device.
-            </span>
-
-            <span className="upload-format-note">
-              Images: JPEG, PNG, WebP or GIF · Up to 5 images,
-              10 MB each
-            </span>
-
-            <span className="upload-format-note">
-              Videos: MP4, MOV, AVI, MKV or WebM · 1 video,
-              maximum 50 MB
-            </span>
-
-            <span className="upload-select-button">
-              Browse Files
-            </span>
-
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm"
-              multiple
-              onChange={handleEvidenceSelect}
-              disabled={submitting}
-              hidden
-            />
-          </label>
+          <section className="live-photo-panel">
+            <div className="live-photo-heading">
+              <span className="live-photo-icon"><Camera size={19} /></span>
+              <div><strong>Camera evidence</strong><small>Camera permission is requested when you open the camera. Then choose photo or video.</small></div>
+              {!cameraStream && <button type="button" className="secondary-button" onClick={startCamera} disabled={submitting || openingCamera || imageCount >= MAX_IMAGES}>
+                <Camera size={16} /> {openingCamera ? "Opening camera…" : "Open camera"}
+              </button>}
+            </div>
+            {cameraError && <div className="form-error camera-error" role="alert">{cameraError}</div>}
+            {cameraStream && <div className="live-camera-view">
+              <video ref={cameraVideoRef} autoPlay playsInline muted aria-label="Live camera preview" />
+              <div className="live-camera-actions">
+                <button type="button" className="primary-button" onClick={captureLivePhoto} disabled={submitting || capturingPhoto || imageCount >= MAX_IMAGES || recordingVideo}><Camera size={16} /> {capturingPhoto ? "Capturing…" : "Take photo"}</button>
+                {videoCount === 0 && (recordingVideo
+                  ? <button type="button" className="secondary-button" onClick={stopVideoRecording} disabled={submitting}><Video size={16} /> Stop recording</button>
+                  : <button type="button" className="secondary-button" onClick={startVideoRecording} disabled={submitting}><Video size={16} /> Record video</button>)}
+                <button type="button" className="secondary-button" onClick={() => { if (recordingVideo) stopVideoRecording(); setCameraStream(null); }} disabled={submitting || recordingVideo}><CameraOff size={16} /> Close camera</button>
+              </div>
+            </div>}
+          </section>
 
           {/* FILE COUNTS */}
           <div className="evidence-count-row">
@@ -452,7 +539,9 @@ async function useCurrentLocation() {
                           <video
                             src={preview}
                             controls
+                            playsInline
                             preload="metadata"
+                            onError={() => setCameraError("The recorded video could not be played in this browser. Try recording again.")}
                           />
                         ) : (
                           <img
@@ -560,11 +649,63 @@ async function useCurrentLocation() {
           <div className="privacy-note">
             <ShieldCheck size={17} />
             <span>
-              Only upload evidence you are authorized to share.
+              Photos and videos recorded here are attached to this complaint. Camera file uploads are disabled.
             </span>
           </div>
         </aside>
       </div>
+      {showDuplicateWarning && (
+        <div
+          className="duplicate-warning-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !submitting) setShowDuplicateWarning(false);
+          }}
+        >
+          <section className="duplicate-warning-dialog" role="dialog" aria-modal="true" aria-labelledby="duplicate-warning-title">
+            <header className="duplicate-warning-header">
+              <span className="duplicate-warning-icon"><AlertTriangle size={21} /></span>
+              <div>
+                <h2 id="duplicate-warning-title">A similar complaint already exists!</h2>
+                <p>Review the matching reports. Support an existing issue or submit this as a separate problem.</p>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setShowDuplicateWarning(false)} disabled={submitting} aria-label="Close warning"><X size={18} /></button>
+            </header>
+
+            <div className="duplicate-match-list">
+              {duplicateMatches.map((match) => (
+                <article className="duplicate-match-card" key={match.id}>
+                  {match.image_preview ? (
+                    <img className="duplicate-match-image" src={match.image_preview} alt={`Existing evidence for ${match.title}`} />
+                  ) : (
+                    <div className="duplicate-match-image duplicate-match-image-empty"><ImageIcon size={22} />No image</div>
+                  )}
+                  <div className="duplicate-match-body">
+                    <div className="duplicate-match-id">{match.id}</div>
+                    <h3>{match.title}</h3>
+                    <p><MapPin size={14} />{match.location || "Location not provided"}</p>
+                    <div className="duplicate-match-meta">
+                      <span>Status: <strong>{match.status}</strong></span>
+                      <span><Users size={14} />{match.report_count} {match.report_count === 1 ? "citizen" : "citizens"} reported</span>
+                    </div>
+                    <button className="primary-button small" type="button" disabled={submitting} onClick={() => submitAfterDuplicateChoice(match.id)}>
+                      Support Existing Complaint
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            {error && <div className="form-error duplicate-warning-error" role="alert">{error}</div>}
+            <footer className="duplicate-warning-actions">
+              <button type="button" className="secondary-button" onClick={() => setShowDuplicateWarning(false)} disabled={submitting}>Keep editing</button>
+              <button type="button" className="secondary-button" onClick={() => submitAfterDuplicateChoice(null, true)} disabled={submitting}>
+                {submitting ? "Submitting..." : "Submit as New Complaint"}
+              </button>
+            </footer>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

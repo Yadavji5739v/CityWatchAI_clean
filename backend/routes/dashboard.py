@@ -26,7 +26,7 @@ def admin_dashboard(user: dict = Depends(get_current_user)):
                        SUM(CASE WHEN status IN ('Assigned', 'In Progress')
                                 THEN 1 ELSE 0 END) AS active_assignments,
                        SUM(CASE WHEN priority IN ('High', 'Critical', 'high', 'critical')
-                                THEN 1 ELSE 0 END) AS `high_priority`,
+                                THEN 1 ELSE 0 END) AS high_priority,
                        SUM(CASE WHEN status IN ('Resolved', 'Closed', 'resolved', 'closed')
                                 THEN 1 ELSE 0 END) AS resolved
                 FROM complaints
@@ -134,7 +134,7 @@ def citizen_dashboard(user: dict = Depends(get_current_user)):
             status_counts = {row["status"]: row["total"] for row in cursor.fetchall()}
             cursor.execute(
                 """
-                SELECT id, title, category, status, priority, created_at, complaint_number
+                SELECT id, title, category, status, priority, created_at
                 FROM complaints WHERE created_by_user_id = %s
                 ORDER BY created_at DESC LIMIT 5
                 """,
@@ -144,6 +144,11 @@ def citizen_dashboard(user: dict = Depends(get_current_user)):
         finally:
             cursor.close()
 
+    normalized_counts = {str(status or "").strip().lower().replace("_", " "): int(total or 0)
+                         for status, total in status_counts.items()}
+    verified_statuses = {"verified", "assigned", "in progress", "resolved", "closed"}
+    verified_reports = sum(count for status, count in normalized_counts.items() if status in verified_statuses)
+    supported_reports = normalized_counts.get("supported", 0)
     return {
         "total_complaints": sum(status_counts.values()),
         "submitted": int(status_counts.get("Submitted", 0) + status_counts.get("Pending Review", 0)),
@@ -151,4 +156,11 @@ def citizen_dashboard(user: dict = Depends(get_current_user)):
         "resolved": int(status_counts.get("Resolved", 0) + status_counts.get("Closed", 0)),
         "recent_complaints": recent,
         "status_breakdown": status_counts,
+        "points": {
+            "total": verified_reports * 20 + supported_reports * 5,
+            "verified_reports": verified_reports,
+            "supported_reports": supported_reports,
+            "points_per_verified_report": 20,
+            "points_per_supported_report": 5,
+        },
     }

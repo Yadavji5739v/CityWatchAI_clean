@@ -1,126 +1,131 @@
-"""Evidence file upload routes."""
+"""Authenticated evidence upload and listing backed by Supabase Storage."""
 
-from typing import Optional
+import logging
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
-from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from services.auth_helpers import get_authenticated_client, get_user_id_from_client, get_user_profile
+from database import get_connection
+from services.local_auth import get_current_user
+from services.supabase_client import delete_evidence, upload_evidence
 
 router = APIRouter(prefix="/api", tags=["evidence"])
+logger = logging.getLogger(__name__)
 
-# Allowed video MIME types
-ALLOWED_VIDEO_TYPES = {
+ALLOWED_TYPES = {
     "video/mp4", "video/webm", "video/quicktime", "video/x-msvideo",
-    "video/x-matroska", "video/ogg",
+    "video/x-matroska", "video/ogg", "image/jpeg", "image/png", "image/webp", "image/gif",
 }
-ALLOWED_IMAGE_TYPES = {
-    "image/jpeg", "image/png", "image/webp", "image/gif",
+MAX_FILE_SIZE = 50 * 1024 * 1024
+MAX_IMAGE_SIZE = 10 * 1024 * 1024
+ALLOWED_EXTENSIONS = {
+    "image/jpeg": {".jpg", ".jpeg"}, "image/png": {".png"}, "image/webp": {".webp"},
+    "image/gif": {".gif"}, "video/mp4": {".mp4"}, "video/webm": {".webm"},
+    "video/quicktime": {".mov"}, "video/x-msvideo": {".avi"},
+    "video/x-matroska": {".mkv"}, "video/ogg": {".ogv", ".ogg"},
 }
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post("/complaints/{complaint_id}/evidence")
-async def upload_evidence(
+@router.post("/complaints/{complaint_id}/evidence", status_code=status.HTTP_201_CREATED)
+async def upload_evidence_route(
     complaint_id: str,
     file: UploadFile = File(...),
     file_type: str = Form("video"),
-    authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    user: dict = Depends(get_current_user),
 ):
-    """Upload video or image evidence for a complaint."""
-    client = get_authenticated_client(authorization)
-    user_id = get_user_id_from_client(client)
+    content_type = (file.content_type or "").lower()
+    if content_type not in ALLOWED_TYPES or content_type.split("/", 1)[0] != file_type:
+        raise HTTPException(status_code=400, detail="Choose a supported image or video file.")
+    original_name = Path(file.filename or "evidence").name
+    extension = Path(original_name).suffix.lower()
+    if extension not in ALLOWED_EXTENSIONS.get(content_type, set()):
+        raise HTTPException(status_code=400, detail="The filename extension does not match the evidence type.")
+    max_size = MAX_IMAGE_SIZE if file_type == "image" else MAX_FILE_SIZE
+    content = await file.read(max_size + 1)
+    if not content:
+        raise HTTPException(status_code=400, detail="Empty files cannot be uploaded.")
+    if len(content) > max_size:
+        raise HTTPException(status_code=413, detail=f"Evidence exceeds the {max_size // (1024 * 1024)} MB upload limit.")
 
-    # Verify complaint exists and user has access
-    complaint = (
-        client.table("complaints")
-        .select("citizen_id")
-        .eq("id", complaint_id)
-        .single()
-        .execute()
-    )
-    if not complaint.data:
-        raise HTTPException(status_code=404, detail="Complaint not found")
-
-    profile = get_user_profile(client, user_id)
-    role = profile.get("role", "citizen")
-    if complaint.data["citizen_id"] != user_id and role not in {"admin", "officer"}:
-        raise HTTPException(status_code=403, detail="Not authorized to upload evidence for this complaint")
-
-    # Validate file type
-    content_type = file.content_type or ""
-    if file_type == "video" and content_type not in ALLOWED_VIDEO_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid video type: {content_type}. Allowed: {', '.join(ALLOWED_VIDEO_TYPES)}",
-        )
-    if file_type == "image" and content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid image type: {content_type}. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}",
-        )
-
-    # Read and validate file size
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Maximum: {MAX_FILE_SIZE // (1024*1024)} MB")
-
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Empty file not allowed")
-
-    # Upload to Supabase Storage
-    filename = file.filename or "upload"
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
-    storage_path = f"{complaint_id}/{user_id}_{filename}"
-
+    evidence_id = str(uuid.uuid4())
+    storage_path = f"complaints/{complaint_id}/{evidence_id}{extension}"
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    uploaded = False
     try:
-        storage_response = client.storage.from_("evidence").upload(
-            storage_path,
-            file_bytes,
-            file_options={"content-type": content_type or "application/octet-stream"},
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
-
-    # Create evidence record
-    evidence_record = client.table("evidence_files").insert({
-        "complaint_id": complaint_id,
-        "storage_path": storage_path,
-        "file_type": file_type,
-        "file_size": len(file_bytes),
-        "uploaded_by": user_id,
-    }).execute()
-
-    # Log in history
-    client.table("complaint_history").insert({
-        "complaint_id": complaint_id,
-        "actor_id": user_id,
-        "action": f"{file_type}_evidence_uploaded",
-    }).execute()
+        with get_connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT created_by_user_id FROM complaints WHERE id = %s", (complaint_id,))
+                complaint = cursor.fetchone()
+                if not complaint:
+                    raise HTTPException(status_code=404, detail="Complaint not found.")
+                if user["role"] == "citizen" and complaint["created_by_user_id"] != user["id"]:
+                    raise HTTPException(status_code=403, detail="You can only add evidence to your own complaint.")
+                upload_evidence(storage_path, content, content_type)
+                uploaded = True
+                cursor.execute(
+                    """INSERT INTO evidence_files
+                       (id, complaint_id, original_name, file_type, mime_type, file_size,
+                        file_path, uploaded_by, created_at)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (evidence_id, complaint_id, original_name, file_type, content_type,
+                     len(content), storage_path, user["id"], now),
+                )
+                cursor.execute(
+                    """INSERT INTO complaint_history
+                       (complaint_id, actor_id, action, created_at)
+                       VALUES (%s, %s, %s, %s)""",
+                    (complaint_id, user["id"], f"{file_type}_evidence_uploaded", now),
+                )
+            finally:
+                cursor.close()
+    except HTTPException:
+        if uploaded:
+            try:
+                delete_evidence(storage_path)
+            except Exception:
+                logger.exception("Could not roll back an evidence object after a failed database write.")
+        raise
+    except Exception as exc:
+        if uploaded:
+            try:
+                delete_evidence(storage_path)
+            except Exception:
+                logger.exception("Could not roll back an evidence object after a failed database write.")
+        logger.exception("Evidence upload failed.")
+        raise HTTPException(status_code=503, detail="Evidence could not be saved. Please try again.") from exc
 
     return {
         "message": "Evidence uploaded successfully",
         "file_path": storage_path,
-        "file_size": len(file_bytes),
-        "record": evidence_record.data[0] if evidence_record.data else None,
+        "file_size": len(content),
+        "record": {
+            "id": evidence_id, "complaint_id": complaint_id, "original_name": original_name,
+            "file_type": file_type, "mime_type": content_type, "file_size": len(content),
+            "url": f"/api/complaints/{complaint_id}/evidence/{evidence_id}",
+        },
     }
 
 
 @router.get("/complaints/{complaint_id}/evidence")
-async def list_evidence(
-    complaint_id: str,
-    authorization: Optional[str] = Header(default=None, alias="Authorization"),
-):
-    """List all evidence files for a complaint."""
-    client = get_authenticated_client(authorization)
-    user_id = get_user_id_from_client(client)
+async def list_evidence_route(complaint_id: str, user: dict = Depends(get_current_user)):
+    from routes.complaints import get_complaint
 
-    # Access check done by RLS
-    response = (
-        client.table("evidence_files")
-        .select("*")
-        .eq("complaint_id", complaint_id)
-        .order("created_at", desc=False)
-        .execute()
-    )
-
-    return response.data or []
+    await get_complaint(complaint_id, user)
+    with get_connection() as connection:
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT id, original_name, file_type, mime_type, file_size, created_at "
+                "FROM evidence_files WHERE complaint_id = %s ORDER BY created_at",
+                (complaint_id,),
+            )
+            files = cursor.fetchall()
+        finally:
+            cursor.close()
+    return [
+        {**item, "url": f"/api/complaints/{complaint_id}/evidence/{item['id']}"}
+        for item in files
+    ]

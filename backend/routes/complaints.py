@@ -3,19 +3,28 @@ import os
 import logging
 import json
 import mimetypes
+import base64
 import uuid
+from io import BytesIO
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from database import UPLOAD_DIR, get_connection
 from services.civic_classifier import classify_evidence
+from services.duplicate_detection import compare_complaint, image_fingerprints
 from services.local_auth import get_current_user
 from services.routing_service import find_routing_conflict, suggest_department
+from services.supabase_client import (
+    delete_evidence,
+    download_evidence,
+    upload_evidence,
+)
 
 router = APIRouter(prefix="/api", tags=["complaints"])
 logger = logging.getLogger(__name__)
@@ -103,6 +112,8 @@ async def _parse_complaint_request(request: Request):
             "description": (form.get("description") or "").strip(),
             "priority": (form.get("priority") or "Needs Review").strip(),
             "status": (form.get("status") or "Submitted").strip(),
+            "support_existing_id": (form.get("support_existing_id") or "").strip(),
+            "confirm_new_complaint": (form.get("confirm_new_complaint") or "").strip().lower(),
         }
         uploads.extend(
             file_obj
@@ -123,7 +134,7 @@ async def _parse_complaint_request(request: Request):
     return payload, uploads
 
 
-async def _save_uploaded_evidence(file_obj, user_id: str) -> dict:
+async def _save_uploaded_evidence(file_obj, user_id: str, complaint_id: str) -> dict:
     filename = Path(str(file_obj.filename)).name
     extension = Path(filename).suffix.lower()
     mime_type = (file_obj.content_type or "").lower()
@@ -147,22 +158,255 @@ async def _save_uploaded_evidence(file_obj, user_id: str) -> dict:
             detail=f"{file_type.title()} exceeds the maximum allowed size of {maximum_size // (1024 * 1024)} MB.",
         )
 
+    fingerprints = image_fingerprints(file_bytes) if file_type == "image" else None
+
     evidence_id = str(uuid.uuid4())
     safe_name = f"{evidence_id}{extension}"
-    evidence_directory = UPLOAD_DIR / "evidence"
-    evidence_directory.mkdir(parents=True, exist_ok=True)
-    save_path = evidence_directory / safe_name
-    save_path.write_bytes(file_bytes)
+    storage_path = f"complaints/{complaint_id}/{evidence_id}{extension}"
+    try:
+        upload_evidence(storage_path, file_bytes, mime_type)
+    except Exception as exc:
+        logger.exception("Supabase evidence upload failed.")
+        raise HTTPException(status_code=503, detail="Evidence storage is temporarily unavailable.") from exc
+
+    # The temporary copy exists only while the classifier processes this request.
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(prefix="citywatch-evidence-", suffix=extension, delete=False) as temp_file:
+            temp_file.write(file_bytes)
+            processing_path = Path(temp_file.name)
+    except Exception:
+        try:
+            delete_evidence(storage_path)
+        except Exception:
+            logger.exception("Unable to remove evidence after temporary processing-file creation failed.")
+        raise
     return {
         "id": evidence_id,
         "original_name": filename,
         "file_type": file_type,
         "mime_type": mime_type,
         "file_size": len(file_bytes),
-        "file_path": str(save_path.relative_to(Path(__file__).resolve().parent.parent).as_posix()),
-        "path": save_path,
+        "file_path": storage_path,
+        "path": processing_path,
+        "storage_path": storage_path,
         "uploaded_by": user_id,
+        "sha256": fingerprints[0] if fingerprints else None,
+        "perceptual_hash": fingerprints[1] if fingerprints else None,
     }
+
+
+def _cleanup_uploaded_evidence(items: list[dict], *, delete_remote: bool) -> None:
+    for item in items:
+        path = item.get("path")
+        if path:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                logger.exception("Unable to remove temporary evidence file.")
+        if delete_remote and item.get("storage_path"):
+            try:
+                delete_evidence(item["storage_path"])
+            except Exception:
+                logger.exception("Unable to remove evidence after a failed complaint save.")
+
+
+def _image_preview_data(source: Path | bytes) -> str | None:
+    try:
+        image_source = Image.open(BytesIO(source)) if isinstance(source, bytes) else Image.open(source)
+        with image_source as opened_image:
+            image = ImageOps.exif_transpose(opened_image).convert("RGB")
+            image.thumbnail((480, 360))
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=76, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+    except (OSError, ValueError):
+        logger.warning("Unable to create duplicate-match preview.")
+        return None
+
+
+def _local_evidence_path(stored_path: str) -> Path | None:
+    path = Path(stored_path)
+    candidate = path if path.is_absolute() else Path(__file__).resolve().parent.parent / path
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(UPLOAD_DIR.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def _find_duplicate_matches(candidate: dict, candidate_images: list[dict]) -> list[dict]:
+    """Find issue groups matching image, location, category, or description signals."""
+    grouped = {}
+    with get_connection() as connection:
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                """
+                SELECT c.id, c.title, c.category, c.location, c.latitude, c.longitude,
+                       c.description, c.status, c.created_by_user_id,
+                       COALESCE(s.canonical_complaint_id, c.id) AS canonical_id,
+                       e.id AS evidence_id, e.file_type, e.file_path,
+                       e.sha256, e.perceptual_hash
+                FROM complaints c
+                LEFT JOIN complaint_supports s ON s.supporting_complaint_id = c.id
+                LEFT JOIN evidence_files e
+                  ON e.complaint_id = c.id AND e.file_type = 'image'
+                ORDER BY c.created_at DESC
+                """
+            )
+            rows = cursor.fetchall()
+            for row in rows:
+                canonical_id = row["canonical_id"]
+                group = grouped.setdefault(canonical_id, {
+                    "id": canonical_id,
+                    "title": row["title"],
+                    "category": row["category"],
+                    "location": row["location"],
+                    "latitude": row["latitude"],
+                    "longitude": row["longitude"],
+                    "description": row["description"],
+                    "status": row["status"],
+                    "reporters": set(),
+                    "images": [],
+                })
+                if row["id"] == canonical_id:
+                    for field in ("title", "category", "location", "latitude", "longitude", "description", "status"):
+                        group[field] = row[field]
+                if row["created_by_user_id"]:
+                    group["reporters"].add(row["created_by_user_id"])
+                if not row["evidence_id"]:
+                    continue
+
+                stored_path = str(row["file_path"])
+                image_path = _local_evidence_path(stored_path)
+                sha256 = row["sha256"]
+                perceptual_hash = row["perceptual_hash"]
+                image_bytes = None
+                if not sha256 or not perceptual_hash:
+                    try:
+                        if image_path:  # Backward compatibility with local evidence.
+                            image_bytes = image_path.read_bytes()
+                        elif stored_path.startswith("complaints/"):
+                            image_bytes = download_evidence(stored_path)
+                    except Exception:
+                        logger.warning("Unable to read stored image evidence for duplicate checking.", exc_info=True)
+                if image_bytes and (not sha256 or not perceptual_hash):
+                    fingerprints = image_fingerprints(image_bytes)
+                    if fingerprints:
+                        sha256, perceptual_hash = fingerprints
+                        cursor.execute(
+                            "UPDATE evidence_files SET sha256 = %s, perceptual_hash = %s WHERE id = %s",
+                            (sha256, perceptual_hash, row["evidence_id"]),
+                        )
+                group["images"].append({
+                    "sha256": sha256,
+                    "perceptual_hash": perceptual_hash,
+                    "path": image_path,
+                    "storage_path": stored_path if stored_path.startswith("complaints/") else None,
+                })
+        finally:
+            cursor.close()
+
+    matches = []
+    for group in grouped.values():
+        comparisons = []
+        image_pairs = [
+            (incoming, existing)
+            for incoming in candidate_images
+            for existing in group["images"]
+        ]
+        for incoming, existing in image_pairs:
+            comparisons.append(compare_complaint(candidate | incoming, group | existing))
+        if not image_pairs:
+            comparisons.append(compare_complaint(candidate, group))
+        best = max(comparisons, key=lambda result: result["score"])
+        if not best["is_match"]:
+            continue
+
+        preview = None
+        preview_item = next((image for image in group["images"] if image["path"] or image["storage_path"]), None)
+        if preview_item:
+            try:
+                preview_data = (
+                    preview_item["path"].read_bytes()
+                    if preview_item["path"]
+                    else download_evidence(preview_item["storage_path"])
+                )
+                preview = _image_preview_data(preview_data)
+            except Exception:
+                logger.warning("Unable to load matched evidence preview.", exc_info=True)
+        matches.append({
+            "id": group["id"],
+            "title": group["title"],
+            "category": group["category"],
+            "location": group["location"],
+            "status": group["status"],
+            "report_count": len(group["reporters"]),
+            "image_preview": preview,
+            "score": best["score"],
+            "reasons": best["reasons"],
+        })
+    return sorted(matches, key=lambda item: item["score"], reverse=True)[:5]
+
+
+def _validate_duplicate_choice(matches: list[dict], support_existing_id: str | None, confirm_new: bool) -> str | None:
+    """Require the citizen's explicit choice whenever the server finds a possible match."""
+    if support_existing_id:
+        if not any(match["id"] == support_existing_id for match in matches):
+            raise HTTPException(
+                status_code=409,
+                detail="That complaint no longer matches this report. Please run the duplicate check again.",
+            )
+        return support_existing_id
+    if matches and not confirm_new:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_confirmation_required",
+                "message": "A similar complaint already exists! Review the matches before submitting.",
+                "matches": matches,
+            },
+        )
+    return None
+
+
+@router.post("/complaints/check-duplicates")
+async def check_complaint_duplicates(request: Request, user: dict = Depends(get_current_user)):
+    if user["role"] != "citizen":
+        raise HTTPException(status_code=403, detail="Only citizens can check complaint duplicates.")
+    payload, uploads = await _parse_complaint_request(request)
+    try:
+        latitude = float(payload["latitude"]) if payload.get("latitude") not in (None, "") else None
+        longitude = float(payload["longitude"]) if payload.get("longitude") not in (None, "") else None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Latitude and longitude must be valid numbers.") from exc
+    if (latitude is None) != (longitude is None):
+        raise HTTPException(status_code=400, detail="Provide both latitude and longitude, or leave both blank.")
+
+    image_uploads = [item for item in uploads if (item.content_type or "").startswith("image/")]
+    if len(image_uploads) > MAX_IMAGE_COUNT:
+        raise HTTPException(status_code=400, detail=f"Upload no more than {MAX_IMAGE_COUNT} images.")
+    fingerprints = []
+    for image_upload in image_uploads:
+        data = await image_upload.read()
+        if len(data) > ALLOWED_EVIDENCE["image"]["max_size"]:
+            raise HTTPException(status_code=413, detail="An image exceeds the 10 MB limit.")
+        fingerprint = image_fingerprints(data)
+        if fingerprint:
+            fingerprints.append({"sha256": fingerprint[0], "perceptual_hash": fingerprint[1]})
+
+    candidate = {
+        "title": str(payload.get("title") or "").strip(),
+        "category": str(payload.get("category") or "").strip(),
+        "location": str(payload.get("location") or payload.get("location_text") or "").strip(),
+        "description": str(payload.get("description") or "").strip(),
+        "latitude": latitude,
+        "longitude": longitude,
+    }
+    matches = await run_in_threadpool(_find_duplicate_matches, candidate, fingerprints)
+    return {"matches": matches}
 
 
 @router.get("/complaints")
@@ -232,6 +476,7 @@ async def get_complaint(complaint_id: str, user: dict = Depends(get_current_user
                 (complaint_id,),
             )
             row = cursor.fetchone()
+            row = dict(row) if row is not None else None
         finally:
             cursor.close()
 
@@ -290,23 +535,31 @@ async def get_complaint_video(complaint_id: str, user: dict = Depends(get_curren
     if not complaint.get("video_path"):
         raise HTTPException(status_code=404, detail="No video evidence is attached to this complaint.")
 
-    saved_path = Path(complaint["video_path"])
-    resolved_path = saved_path if saved_path.is_absolute() else Path(__file__).resolve().parent.parent / saved_path
+    return _evidence_response(complaint["video_path"], complaint.get("video_name") or "evidence-video")
+
+
+def _evidence_response(stored_path: str, filename: str, mime_type: str | None = None):
+    """Serve private cloud evidence after the complaint access check has passed."""
+    safe_filename = Path(filename).name
+    media_type = mime_type or mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
+    resolved_legacy_path = _local_evidence_path(stored_path)
+    if resolved_legacy_path and resolved_legacy_path.is_file():
+        return FileResponse(
+            resolved_legacy_path,
+            media_type=media_type,
+            headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+        )
+    if not stored_path.startswith("complaints/"):
+        raise HTTPException(status_code=404, detail="Evidence file is unavailable.")
     try:
-        resolved_path = resolved_path.resolve(strict=True)
-        resolved_path.relative_to(UPLOAD_DIR.resolve())
-    except (OSError, ValueError) as exc:
-        logger.exception("Complaint evidence path is missing or outside the upload directory.")
-        raise HTTPException(status_code=404, detail="Video evidence is unavailable.") from exc
-
-    if not resolved_path.is_file():
-        raise HTTPException(status_code=404, detail="Video evidence is unavailable.")
-
-    content_type = mimetypes.guess_type(resolved_path.name)[0] or "application/octet-stream"
-    return FileResponse(
-        resolved_path,
-        media_type=content_type,
-        headers={"Content-Disposition": f'inline; filename="{resolved_path.name}"'},
+        content = download_evidence(stored_path)
+    except Exception as exc:
+        logger.exception("Unable to retrieve evidence from Supabase Storage.")
+        raise HTTPException(status_code=404, detail="Evidence file is unavailable.") from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
     )
 
 
@@ -335,26 +588,7 @@ async def get_complaint_evidence(
     if not evidence:
         raise HTTPException(status_code=404, detail="Evidence file not found.")
 
-    saved_path = Path(evidence["file_path"])
-    resolved_path = (
-        saved_path
-        if saved_path.is_absolute()
-        else Path(__file__).resolve().parent.parent / saved_path
-    )
-    try:
-        resolved_path = resolved_path.resolve(strict=True)
-        resolved_path.relative_to(UPLOAD_DIR.resolve())
-    except (OSError, ValueError) as exc:
-        logger.exception("Complaint evidence path is missing or outside the upload directory.")
-        raise HTTPException(status_code=404, detail="Evidence file is unavailable.") from exc
-
-    if not resolved_path.is_file():
-        raise HTTPException(status_code=404, detail="Evidence file is unavailable.")
-    return FileResponse(
-        resolved_path,
-        media_type=evidence["mime_type"],
-        headers={"Content-Disposition": f'inline; filename="{Path(evidence["original_name"]).name}"'},
-    )
+    return _evidence_response(evidence["file_path"], evidence["original_name"], evidence["mime_type"])
 
 
 class VerifyRequest(BaseModel):
@@ -442,7 +676,14 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
     location = str(payload.get("location") or "").strip() or str(payload.get("location_text") or "").strip()
     description = str(payload.get("description") or "").strip()
     priority = str(payload.get("priority") or "Needs Review").strip() or "Needs Review"
+<<<<<<< HEAD
     complaint_status = "Pending Review"
+=======
+    support_existing_id = str(payload.get("support_existing_id") or "").strip() or None
+    complaint_status = "Supported" if support_existing_id else "Pending Review"
+    latitude = payload.get("latitude")
+    longitude = payload.get("longitude")
+>>>>>>> 334704a (Update CityWatch AI with duplicate detection and Supabase integration)
 
     if not title or len(title) < 3:
         raise HTTPException(status_code=400, detail="Complaint title is required and must be at least 3 characters long.")
@@ -469,8 +710,28 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
 
         for file_obj in uploads:
             saved_evidence.append(
-                await _save_uploaded_evidence(file_obj, user["id"])
+                await _save_uploaded_evidence(file_obj, user["id"], complaint_id)
             )
+
+        candidate = {
+            "title": title,
+            "category": category,
+            "location": location,
+            "description": description,
+            "latitude": latitude,
+            "longitude": longitude,
+        }
+        fingerprints = [
+            {"sha256": item["sha256"], "perceptual_hash": item["perceptual_hash"]}
+            for item in saved_evidence
+            if item["file_type"] == "image" and item.get("sha256")
+        ]
+        matches = await run_in_threadpool(_find_duplicate_matches, candidate, fingerprints)
+        canonical_complaint_id = _validate_duplicate_choice(
+            matches,
+            support_existing_id,
+            payload.get("confirm_new_complaint") == "true",
+        )
 
         analysis_result = (
             await run_in_threadpool(classify_evidence, saved_evidence, category)
@@ -485,8 +746,10 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
                 "processing_time_ms": 0,
             }
         )
+        # Evidence is durable in Storage; this local copy is only for model inference.
+        _cleanup_uploaded_evidence(saved_evidence, delete_remote=False)
         routed_department = None
-        if analysis_result.get("analysis_status") == "completed":
+        if not support_existing_id and analysis_result.get("analysis_status") == "completed":
             with get_connection() as connection:
                 cursor = connection.cursor(dictionary=True)
                 try:
@@ -556,8 +819,9 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
                         """
                         INSERT INTO evidence_files (
                             id, complaint_id, original_name, file_type, mime_type,
-                            file_size, file_path, uploaded_by, created_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            file_size, file_path, uploaded_by, created_at, sha256,
+                            perceptual_hash
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             evidence_item["id"],
@@ -569,7 +833,19 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
                             evidence_item["file_path"],
                             user["id"],
                             now,
+                            evidence_item.get("sha256"),
+                            evidence_item.get("perceptual_hash"),
                         ),
+                    )
+                if canonical_complaint_id:
+                    cursor.execute(
+                        """
+                        INSERT INTO complaint_supports (
+                            supporting_complaint_id, canonical_complaint_id,
+                            supported_by_user_id, created_at
+                        ) VALUES (%s, %s, %s, %s)
+                        """,
+                        (complaint_id, canonical_complaint_id, user["id"], now),
                     )
                 cursor.execute(
                     """
@@ -627,18 +903,10 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
             finally:
                 cursor.close()
     except HTTPException:
-        for evidence_item in saved_evidence:
-            try:
-                evidence_item["path"].unlink(missing_ok=True)
-            except OSError:
-                logger.exception("Unable to remove evidence after complaint submission failure.")
+        _cleanup_uploaded_evidence(saved_evidence, delete_remote=True)
         raise
     except Exception as exc:
-        for evidence_item in saved_evidence:
-            try:
-                evidence_item["path"].unlink(missing_ok=True)
-            except OSError:
-                logger.exception("Unable to remove evidence after complaint save failure.")
+        _cleanup_uploaded_evidence(saved_evidence, delete_remote=True)
         logger.exception("Unable to save complaint %s.", complaint_id, exc_info=exc)
         raise HTTPException(status_code=500, detail="Unable to save complaint.") from exc
 
@@ -654,6 +922,25 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
         for item in saved_evidence
     ]
     complaint["ai_analysis"] = analysis_result
+    if canonical_complaint_id:
+        with get_connection() as connection:
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    """
+                    SELECT COUNT(DISTINCT created_by_user_id) AS report_count
+                    FROM complaints c
+                    LEFT JOIN complaint_supports s ON s.supporting_complaint_id = c.id
+                    WHERE COALESCE(s.canonical_complaint_id, c.id) = %s
+                    """,
+                    (canonical_complaint_id,),
+                )
+                report_count = cursor.fetchone()["report_count"]
+            finally:
+                cursor.close()
+        complaint["supported_complaint_id"] = canonical_complaint_id
+        complaint["status"] = "Supported"
+        complaint["support_report_count"] = report_count
     return complaint
 
 

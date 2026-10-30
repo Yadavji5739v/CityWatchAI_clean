@@ -1,4 +1,4 @@
-import { ArrowUpRight, CheckCheck, Clock3, Inbox, MapPin } from "lucide-react";
+import { ArrowUpRight, CheckCheck, Clock3, Inbox, MapPin, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const views = {
@@ -26,7 +26,7 @@ const views = {
   },
 };
 
-export default function OfficerComplaints({ complaints = [], view = "new" }) {
+export default function OfficerComplaints({ complaints = [], view = "new", loading = false, onRefresh }) {
   const config = views[view] || views.new;
   const Icon = config.icon;
   const filteredComplaints = complaints.filter(config.matches);
@@ -42,6 +42,9 @@ export default function OfficerComplaints({ complaints = [], view = "new" }) {
         <span className={`officer-queue-count ${view}`}>
           <Icon size={16} /> {filteredComplaints.length} {filteredComplaints.length === 1 ? "case" : "cases"}
         </span>
+        <button className="secondary-button" type="button" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={15} className={loading ? "spin" : ""} /> Refresh
+        </button>
       </div>
 
       <section className="content-panel">
@@ -67,7 +70,7 @@ export default function OfficerComplaints({ complaints = [], view = "new" }) {
                   </td>
                   <td>{complaint.category}</td>
                   <td><span className="location-cell"><MapPin size={14} />{complaint.location}</span></td>
-                  <td>{complaint.department || "Awaiting assignment"}</td>
+                  <td>{complaint.department || (complaint.status === "Pending Review" ? "Awaiting review" : "Awaiting assignment")}</td>
                   <td><span className={`badge ${complaint.status === "Resolved" || complaint.status === "Closed" ? "green" : complaint.status === "In Progress" ? "purple" : "amber"}`}>{complaint.status}</span></td>
                   <td>{complaint.priority}</td>
                   <td>
@@ -84,7 +87,9 @@ export default function OfficerComplaints({ complaints = [], view = "new" }) {
               ))}
             </tbody>
           </table>
-          {filteredComplaints.length === 0 && (
+          {loading ? (
+            <div className="empty-state" role="status"><strong>Loading complaints…</strong></div>
+          ) : filteredComplaints.length === 0 && (
             <div className="empty-state">
               <Icon size={32} />
               <strong>No {view === "new" ? "new" : view === "pending" ? "pending" : "solved"} complaints</strong>

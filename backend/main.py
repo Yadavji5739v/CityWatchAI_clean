@@ -1,12 +1,13 @@
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
-import mysql.connector
+import psycopg2
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from database import DATABASE_NAME, get_connection, init_db
+from database import DATABASE_NAME, close_connection_pool, get_connection, init_db
 from routes.ai import router as ai_router
 from routes.assignments import router as assignments_router
 from routes.complaints import router as complaints_router
@@ -19,9 +20,14 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
-    init_demo_accounts()
-    yield
+    try:
+        if os.getenv("CITYWATCH_AUTO_MIGRATE", "true").lower() == "true":
+            init_db()
+        if os.getenv("CITYWATCH_SEED_DEMO_ACCOUNTS", "true").lower() == "true":
+            init_demo_accounts()
+        yield
+    finally:
+        close_connection_pool()
 
 app = FastAPI(
     title="CityWatch AI API",
@@ -30,14 +36,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+configured_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+local_origins = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+    "http://localhost:4173", "http://127.0.0.1:4173",
+]
+allowed_origins = list(dict.fromkeys(configured_origins + ([] if os.getenv("ENVIRONMENT") == "production" else local_origins)))
+if "*" in allowed_origins:
+    raise ValueError("CORS_ORIGINS cannot contain '*' when credentialed requests are enabled.")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,11 +91,11 @@ def health():
                 cursor.fetchone()
             finally:
                 cursor.close()
-    except (mysql.connector.Error, RuntimeError) as exc:
-        logger.exception("MySQL health check failed.")
+    except (psycopg2.Error, RuntimeError) as exc:
+        logger.exception("Supabase PostgreSQL health check failed.")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="MySQL database is unavailable.",
+            detail="Supabase PostgreSQL database is unavailable.",
         ) from exc
 
     return {

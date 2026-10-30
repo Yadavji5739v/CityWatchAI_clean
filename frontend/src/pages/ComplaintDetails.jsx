@@ -14,8 +14,9 @@ import {
 } from "lucide-react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import AssignOfficerModal from "../components/AssignOfficerModal";
+import { API_BASE_URL } from "../lib/api";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api";
+
 
 function formatDate(value) {
   if (!value) return "Not available";
@@ -392,7 +393,7 @@ export default function ComplaintDetails({ complaints = [], user, onComplaintUpd
           <section className="content-panel case-section case-assignment-card">
             <header className="case-section-heading"><div><span className="section-icon"><ClipboardCheck size={17} /></span><div><h2>Case ownership</h2><p>Routing and assignment</p></div></div></header>
             <dl className="assignment-facts">
-              <div><dt>Department</dt><dd>{complaint.department || "Not assigned"}</dd></div>
+              <div><dt>Department</dt><dd>{complaint.department || (status.includes("pending review") || status === "submitted" ? "Awaiting review" : "Not assigned")}</dd></div>
               <div><dt>Officer</dt><dd>{complaint.officer_name || "Not assigned"}</dd></div>
               <div><dt>Current status</dt><dd><span className={`badge ${badgeTone(complaint.status)}`}>{complaint.status}</span></dd></div>
             </dl>

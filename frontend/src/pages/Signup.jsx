@@ -4,15 +4,16 @@ import { Link } from "react-router-dom";
 import { UserRound, Mail, LockKeyhole, UserPlus } from "lucide-react";
 import "./Auth.css";
 
-export default function Signup() {
+export default function Signup({ onSignup }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [mobile, setMobile] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
     setError("");
 
@@ -21,9 +22,26 @@ export default function Signup() {
       return;
     }
 
-    setError(
-      "The signup form is ready, but registration must be connected to your backend API."
-    );
+    setSubmitting(true);
+    try {
+      if (typeof onSignup !== "function") {
+        throw new Error("Account creation is not configured. Please try again later.");
+      }
+      await onSignup({
+        full_name: name.trim(),
+        email: email.trim(),
+        mobile: mobile.trim(),
+        password,
+      });
+    } catch (signupError) {
+      setError(
+        signupError instanceof Error
+          ? signupError.message
+          : "Account creation failed. Please try again."
+      );
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -43,6 +61,7 @@ export default function Signup() {
             <UserRound size={16} />
             <input
               id="signup-name"
+              name="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Enter your full name"
@@ -56,6 +75,7 @@ export default function Signup() {
             <Mail size={16} />
             <input
               id="signup-email"
+              name="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -69,6 +89,7 @@ export default function Signup() {
           <div className="auth-input-wrap">
             <input
               id="signup-mobile"
+              name="mobile"
               type="tel"
               value={mobile}
               onChange={(e) => setMobile(e.target.value)}
@@ -83,6 +104,7 @@ export default function Signup() {
             <LockKeyhole size={16} />
             <input
               id="signup-password"
+              name="new-password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -98,6 +120,7 @@ export default function Signup() {
             <LockKeyhole size={16} />
             <input
               id="signup-confirm"
+              name="confirm-password"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
@@ -114,8 +137,8 @@ export default function Signup() {
             </p>
           )}
 
-          <button type="submit" className="auth-primary-button">
-            Create Account <UserPlus size={17} />
+          <button type="submit" className="auth-primary-button" disabled={submitting}>
+            {submitting ? "Creating account..." : "Create Account"} <UserPlus size={17} />
           </button>
         </form>
 
