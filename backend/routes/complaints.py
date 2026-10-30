@@ -2,7 +2,6 @@
 import os
 import logging
 import json
-import math
 import mimetypes
 import uuid
 from datetime import datetime, timezone
@@ -102,8 +101,6 @@ async def _parse_complaint_request(request: Request):
             "category": (form.get("category") or "").strip(),
             "location": (form.get("location") or form.get("location_text") or "").strip(),
             "description": (form.get("description") or "").strip(),
-            "latitude": form.get("latitude"),
-            "longitude": form.get("longitude"),
             "priority": (form.get("priority") or "Needs Review").strip(),
             "status": (form.get("status") or "Submitted").strip(),
         }
@@ -446,8 +443,6 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
     description = str(payload.get("description") or "").strip()
     priority = str(payload.get("priority") or "Needs Review").strip() or "Needs Review"
     complaint_status = "Pending Review"
-    latitude = payload.get("latitude")
-    longitude = payload.get("longitude")
 
     if not title or len(title) < 3:
         raise HTTPException(status_code=400, detail="Complaint title is required and must be at least 3 characters long.")
@@ -458,21 +453,6 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
     if not location:
         raise HTTPException(status_code=400, detail="The location of the reported issue is required.")
 
-    try:
-        latitude = float(latitude) if latitude not in (None, "") else None
-        longitude = float(longitude) if longitude not in (None, "") else None
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Latitude and longitude must be valid numbers.") from exc
-
-    if (latitude is None) != (longitude is None):
-        raise HTTPException(status_code=400, detail="Provide both latitude and longitude, or leave both blank.")
-    if latitude is not None and (
-        not math.isfinite(latitude)
-        or not math.isfinite(longitude)
-        or not -90 <= latitude <= 90
-        or not -180 <= longitude <= 180
-    ):
-        raise HTTPException(status_code=400, detail="Latitude or longitude is outside the valid range.")
 
     complaint_id = _make_complaint_id()
     created_at = _utc_now()
@@ -550,18 +530,16 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
                 cursor.execute(
                     """
                     INSERT INTO complaints (
-                        id, title, category, location, latitude, longitude, description,
+                        id, title, category, location, description,
                         video_name, video_path, priority, status, created_at, updated_at,
                         created_by_user_id, assigned_department_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         complaint_id,
                         title,
                         category,
                         location,
-                        latitude,
-                        longitude,
                         description,
                         video_name,
                         video_path,
