@@ -1,5 +1,5 @@
 
-"""MySQL-backed complaint assignment, progress, and notification routes."""
+"""PostgreSQL-backed complaint assignment, progress, and notification routes."""
 
 import json
 import uuid
@@ -140,9 +140,6 @@ def get_assignments(
                     c.status,
                     a.assigned_at,
 
-                    NULL AS due_date,
-                    NULL AS instructions,
-
                     a.department_id,
                     d.name AS department_name,
                     a.officer_id,
@@ -186,9 +183,6 @@ def get_assignments(
                         c.priority,
                         c.status,
                         c.updated_at AS assigned_at,
-
-                        NULL AS due_date,
-                        NULL AS instructions,
 
                         d.id AS department_id,
                         d.name AS department_name,
@@ -411,7 +405,6 @@ def assign_complaint(
             ))
 
             # 7. Update complaint
-            # No due_date or assignment_instructions columns required.
             new_status = "Assigned"
 
             cursor.execute("""
@@ -491,9 +484,6 @@ def assign_complaint(
                     a.department_id,
                     d.name AS department_name,
                     a.assigned_at,
-
-                    NULL AS due_date,
-                    NULL AS instructions,
 
                     a.is_active
 

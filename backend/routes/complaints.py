@@ -1,3 +1,5 @@
+"""Complaint, evidence, duplicate-detection, and verification routes."""
+
 
 import os
 import logging
@@ -244,7 +246,7 @@ def _find_duplicate_matches(candidate: dict, candidate_images: list[dict]) -> li
         try:
             cursor.execute(
                 """
-                SELECT c.id, c.title, c.category, c.location, c.latitude, c.longitude,
+                SELECT c.id, c.title, c.category, c.location,
                        c.description, c.status, c.created_by_user_id,
                        COALESCE(s.canonical_complaint_id, c.id) AS canonical_id,
                        e.id AS evidence_id, e.file_type, e.file_path,
@@ -264,15 +266,13 @@ def _find_duplicate_matches(candidate: dict, candidate_images: list[dict]) -> li
                     "title": row["title"],
                     "category": row["category"],
                     "location": row["location"],
-                    "latitude": row["latitude"],
-                    "longitude": row["longitude"],
                     "description": row["description"],
                     "status": row["status"],
                     "reporters": set(),
                     "images": [],
                 })
                 if row["id"] == canonical_id:
-                    for field in ("title", "category", "location", "latitude", "longitude", "description", "status"):
+                    for field in ("title", "category", "location", "description", "status"):
                         group[field] = row[field]
                 if row["created_by_user_id"]:
                     group["reporters"].add(row["created_by_user_id"])
@@ -377,14 +377,6 @@ async def check_complaint_duplicates(request: Request, user: dict = Depends(get_
     if user["role"] != "citizen":
         raise HTTPException(status_code=403, detail="Only citizens can check complaint duplicates.")
     payload, uploads = await _parse_complaint_request(request)
-    try:
-        latitude = float(payload["latitude"]) if payload.get("latitude") not in (None, "") else None
-        longitude = float(payload["longitude"]) if payload.get("longitude") not in (None, "") else None
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Latitude and longitude must be valid numbers.") from exc
-    if (latitude is None) != (longitude is None):
-        raise HTTPException(status_code=400, detail="Provide both latitude and longitude, or leave both blank.")
-
     image_uploads = [item for item in uploads if (item.content_type or "").startswith("image/")]
     if len(image_uploads) > MAX_IMAGE_COUNT:
         raise HTTPException(status_code=400, detail=f"Upload no more than {MAX_IMAGE_COUNT} images.")
@@ -402,8 +394,6 @@ async def check_complaint_duplicates(request: Request, user: dict = Depends(get_
         "category": str(payload.get("category") or "").strip(),
         "location": str(payload.get("location") or payload.get("location_text") or "").strip(),
         "description": str(payload.get("description") or "").strip(),
-        "latitude": latitude,
-        "longitude": longitude,
     }
     matches = await run_in_threadpool(_find_duplicate_matches, candidate, fingerprints)
     return {"matches": matches}
@@ -677,6 +667,9 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
     description = str(payload.get("description") or "").strip()
     priority = str(payload.get("priority") or "Needs Review").strip() or "Needs Review"
     complaint_status = "Pending Review"
+    support_existing_id = str(payload.get("support_existing_id") or "").strip() or None
+    confirm_new_value = str(payload.get("confirm_new_complaint") or "").strip().lower()
+    confirm_new_complaint = confirm_new_value in {"true", "1", "yes", "on"}
 
     if not title or len(title) < 3:
         raise HTTPException(status_code=400, detail="Complaint title is required and must be at least 3 characters long.")
@@ -711,8 +704,6 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
             "category": category,
             "location": location,
             "description": description,
-            "latitude": latitude,
-            "longitude": longitude,
         }
         fingerprints = [
             {"sha256": item["sha256"], "perceptual_hash": item["perceptual_hash"]}
@@ -723,7 +714,7 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
         canonical_complaint_id = _validate_duplicate_choice(
             matches,
             support_existing_id,
-            payload.get("confirm_new_complaint") == "true",
+            confirm_new_complaint,
         )
 
         analysis_result = (
@@ -742,7 +733,7 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
         # Evidence is durable in Storage; this local copy is only for model inference.
         _cleanup_uploaded_evidence(saved_evidence, delete_remote=False)
         routed_department = None
-        if not support_existing_id and analysis_result.get("analysis_status") == "completed":
+        if not canonical_complaint_id and analysis_result.get("analysis_status") == "completed":
             with get_connection() as connection:
                 cursor = connection.cursor(dictionary=True)
                 try:
@@ -781,6 +772,7 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         with get_connection() as connection:
+            connection.start_transaction()
             cursor = connection.cursor(dictionary=True)
             try:
                 cursor.execute(
@@ -893,6 +885,10 @@ async def create_complaint(request: Request, user: dict = Depends(get_current_us
                             now,
                         ),
                     )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
             finally:
                 cursor.close()
     except HTTPException:
