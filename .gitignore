@@ -48,3 +48,8 @@ uploads/
 .cache/
 
 .venv311/
+
+.mpl/
+.yolo/
+.venv/
+.venv311/
