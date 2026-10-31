@@ -251,7 +251,7 @@ def login(request: LoginRequest):
         try:
             cursor.execute(
                 """
-                SELECT id, full_name, role, department_id, password_hash, is_active
+                SELECT id, full_name, role, department_id, password_hash, is_active, is_demo
                 FROM users
                 WHERE id = %s OR LOWER(email) = LOWER(%s)
                 LIMIT 1
@@ -261,6 +261,11 @@ def login(request: LoginRequest):
             user = cursor.fetchone()
         finally:
             cursor.close()
+
+    production_demo_account = (
+        os.getenv("ENVIRONMENT", "development").lower() == "production"
+        and bool(user and user.get("is_demo"))
+    )
 
     if not user or not user["is_active"] or not verify_password(request.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Account ID or password is incorrect.")
