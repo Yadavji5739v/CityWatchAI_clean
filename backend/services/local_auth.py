@@ -227,7 +227,7 @@ def get_current_user(
         try:
             cursor.execute(
                 """
-                SELECT id, full_name, role, department_id, is_active
+                SELECT id, full_name, role, department_id, is_active, is_demo
                 FROM users WHERE id = %s
                 """,
                 (claims["sub"],),
@@ -251,7 +251,7 @@ def login(request: LoginRequest):
         try:
             cursor.execute(
                 """
-                SELECT id, full_name, role, department_id, password_hash, is_active
+                SELECT id, full_name, role, department_id, password_hash, is_active, is_demo
                 FROM users
                 WHERE id = %s OR LOWER(email) = LOWER(%s)
                 LIMIT 1
