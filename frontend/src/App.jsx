@@ -238,7 +238,7 @@ function AppShell() {
   }
 
   async function handleDemoLogin(accountId, password) {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: accountId, password }),
@@ -257,7 +257,7 @@ function AppShell() {
   }
 
   async function handleSignup(signupDetails) {
-    const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(signupDetails),
